@@ -91,3 +91,11 @@ networks:
 - `deploy` auto-uploads artifacts before running terraform
 - `app deploy` pulls artifacts + latest Docker image, then restarts the compose stack
 - `app remove` preserves Docker volumes — delete manually if needed
+- Cookie image is pinned to a specific version via `COOKIE_VERSION` env var (default: 1.9.2). Update in .env to upgrade
+- Cookie publishes multi-arch images (amd64 + arm64) via CD workflow on semantic version tags
+- Traefik is pinned to v3.4.0 with health check via `traefik healthcheck --ping`
+- Traefik forwards Cloudflare headers (CF-Connecting-IP, X-Forwarded-For) via `forwardedHeaders.insecure: true`
+- App names must be lowercase alphanumeric with hyphens — validated by the CLI
+- SSM commands use `jq` for safe JSON encoding (no string interpolation injection)
+- `app env` masks values when displaying (shows KEY=***) and validates KEY=VALUE format
+- Bootstrap retries tunnel token fetch 5 times with 10s backoff

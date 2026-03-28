@@ -1,12 +1,22 @@
 entryPoints:
   web:
     address: ":80"
+    forwardedHeaders:
+      # Trust Cloudflare's forwarded headers (CF-Connecting-IP, X-Forwarded-For)
+      insecure: true
 
 providers:
   docker:
     endpoint: "unix:///var/run/docker.sock"
     exposedByDefault: false
     network: appserver
+
+ping:
+  entryPoint: traefik
+
+api:
+  insecure: true
+  dashboard: false
 
 log:
   level: INFO

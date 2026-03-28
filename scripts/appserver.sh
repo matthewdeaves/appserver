@@ -93,10 +93,14 @@ ssm_run() {
   instance_id="$(get_instance_id)"
   region="$(get_region)"
 
+  local params
+  params=$(jq -n --arg cmd "$cmd_string" '{"commands": [$cmd]}') \
+    || { echo "ERROR: Failed to encode command as JSON" >&2; return 1; }
+
   cmd_id=$(aws ssm send-command \
     --instance-ids "$instance_id" \
     --document-name "AWS-RunShellScript" \
-    --parameters "{\"commands\":[\"$cmd_string\"]}" \
+    --parameters "$params" \
     --timeout-seconds "$timeout" \
     --region "$region" \
     --query 'Command.CommandId' \
@@ -340,6 +344,7 @@ package_and_upload_artifact() {
 
   local tmpdir
   tmpdir=$(mktemp -d) || die "Failed to create temp directory"
+  trap 'rm -rf "$tmpdir"' RETURN
 
   # Create artifact directory structure
   mkdir -p "$tmpdir/appserver-artifact/traefik"
@@ -375,7 +380,6 @@ package_and_upload_artifact() {
     "s3://$bucket/deploy/appserver-artifact.tar.gz" \
     --region "$region" --quiet || {
     echo "ERROR: Failed to upload artifact to S3" >&2
-    rm -rf "$tmpdir"
     return 1
   }
   aws s3 cp "$tmpdir/appserver-artifact.tar.gz.sha256" \
@@ -401,7 +405,7 @@ package_and_upload_artifact() {
     fi
   fi
 
-  rm -rf "$tmpdir"
+  # tmpdir cleaned up by RETURN trap
 }
 
 # --- Subcommands ---
@@ -602,14 +606,16 @@ cmd_ssh() {
 cmd_logs() {
   local app="${1:-}"
   if [[ -n "$app" ]]; then
-    ssm_run "cd /opt/appserver/apps/$app && docker compose logs --tail=100 2>&1" 60
+    [[ "$app" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "Invalid app name: $app"
+    ssm_run "cd /opt/appserver/apps/$app && docker compose logs --tail=100 2>&1" 60 || return 1
   else
-    ssm_run "echo '=== Traefik ===' && docker logs --tail=30 traefik 2>&1 && for d in /opt/appserver/apps/*/; do [ -d \"\$d\" ] || continue; app=\$(basename \"\$d\"); echo && echo \"=== \$app ===\"; cd \"\$d\" && docker compose logs --tail=20 2>&1; done" 60
+    ssm_run "echo '=== Traefik ===' && docker logs --tail=30 traefik 2>&1 && for d in /opt/appserver/apps/*/; do [ -d \"\$d\" ] || continue; app=\$(basename \"\$d\"); echo && echo \"=== \$app ===\"; cd \"\$d\" && docker compose logs --tail=20 2>&1; done" 60 || return 1
   fi
 }
 
 cmd_app_deploy() {
   local app="${1:?Usage: appserver app deploy <name>}"
+  [[ "$app" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "Invalid app name: $app"
   echo "Deploying $app..."
 
   # Upload latest config
@@ -666,6 +672,7 @@ cmd_app_list() {
 
 cmd_app_remove() {
   local app="${1:?Usage: appserver app remove <name>}"
+  [[ "$app" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "Invalid app name: $app"
   echo "Removing $app..."
   ssm_run "cd /opt/appserver/apps/$app && docker compose down && rm -rf /opt/appserver/apps/$app" 60
   echo "$app removed. Note: Docker volumes preserved. Remove manually if needed."
@@ -723,21 +730,34 @@ cmd_app_env() {
   local app="${1:?Usage: appserver app env <name> [KEY=VALUE ...]}"
   shift
 
+  # Validate app name (alphanumeric + hyphens only)
+  if [[ ! "$app" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+    die "Invalid app name: $app (must be lowercase alphanumeric with hyphens)"
+  fi
+
   if [[ $# -eq 0 ]]; then
-    # Show current env
-    ssm_run "cat /opt/appserver/apps/$app/.env 2>/dev/null || echo 'No .env file found'" 15
+    # Show current env (mask values for security)
+    ssm_run "if [ -f /opt/appserver/apps/$app/.env ]; then sed 's/=.*/=***/' /opt/appserver/apps/$app/.env; else echo 'No .env file found'; fi" 15
   else
-    # Set env vars
-    local env_args=""
+    # Validate all KEY=VALUE pairs before sending
     for kv in "$@"; do
-      env_args="${env_args}echo '${kv}' >> /tmp/appserver-env-new; "
+      if [[ ! "$kv" =~ ^[A-Za-z_][A-Za-z0-9_]*=.+$ ]]; then
+        die "Invalid env var format: '$kv' (must be KEY=VALUE, key starts with letter/underscore)"
+      fi
     done
+
+    # Build env file content safely via base64
+    local env_content
+    env_content=$(printf '%s\n' "$@" | base64 -w0) || die "Failed to encode env vars"
+
     ssm_run "
       set -e
+      mkdir -p /opt/appserver/apps/$app
       touch /opt/appserver/apps/$app/.env
       cp /opt/appserver/apps/$app/.env /tmp/appserver-env-new
-      ${env_args}
+      echo '$env_content' | base64 -d >> /tmp/appserver-env-new
       mv /tmp/appserver-env-new /opt/appserver/apps/$app/.env
+      chmod 600 /opt/appserver/apps/$app/.env
       echo 'Updated .env for $app. Run \"appserver app deploy $app\" to apply.'
     " 15
   fi

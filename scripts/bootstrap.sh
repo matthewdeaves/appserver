@@ -1,5 +1,5 @@
 #!/bin/bash
-# shellcheck disable=SC2154,SC2034  # Variables injected by Terraform templatefile() — $${} escaping hides usage from shellcheck
+# shellcheck disable=SC2154,SC2034,SC1083  # Variables injected by Terraform templatefile() — $${} escaping hides usage from shellcheck
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -70,14 +70,20 @@ rm -f /tmp/cloudflared
 # Create cloudflared user
 useradd -r -s /sbin/nologin cloudflared 2>/dev/null || true
 
-# Get tunnel token from SSM
+# Get tunnel token from SSM (retry with backoff — SSM may not be ready immediately)
 echo "Fetching tunnel token from SSM..."
-TUNNEL_TOKEN=$(aws ssm get-parameter \
-  --name "$TUNNEL_TOKEN_SSM" \
-  --with-decryption \
-  --query "Parameter.Value" \
-  --output text \
-  --region "$REGION") || die "Failed to get tunnel token from SSM"
+TUNNEL_TOKEN=""
+for attempt in 1 2 3 4 5; do
+  TUNNEL_TOKEN=$(aws ssm get-parameter \
+    --name "$TUNNEL_TOKEN_SSM" \
+    --with-decryption \
+    --query "Parameter.Value" \
+    --output text \
+    --region "$REGION" 2>/dev/null) && break
+  echo "  Attempt $attempt failed, retrying in 10s..."
+  sleep 10
+done
+[[ -n "$TUNNEL_TOKEN" ]] || die "Failed to get tunnel token from SSM after 5 attempts"
 
 # Cloudflared environment file
 mkdir -p /etc/cloudflared
@@ -145,11 +151,18 @@ else
 entryPoints:
   web:
     address: ":80"
+    forwardedHeaders:
+      insecure: true
 providers:
   docker:
     endpoint: "unix:///var/run/docker.sock"
     exposedByDefault: false
     network: appserver
+ping:
+  entryPoint: traefik
+api:
+  insecure: true
+  dashboard: false
 log:
   level: INFO
 TRAEFIK
@@ -157,7 +170,7 @@ TRAEFIK
   cat > /opt/appserver/traefik/docker-compose.yml <<'COMPOSE'
 services:
   traefik:
-    image: traefik:v3.4
+    image: traefik:v3.4.0
     container_name: traefik
     restart: unless-stopped
     ports:
@@ -185,14 +198,30 @@ echo "Starting cloudflared..."
 systemctl daemon-reload
 systemctl enable --now cloudflared || die "Failed to start cloudflared"
 
+# --- Log rotation ---
+cat > /etc/logrotate.d/appserver <<'LOGROTATE'
+/var/log/appserver-bootstrap.log {
+  weekly
+  rotate 4
+  compress
+  missingok
+  notifempty
+}
+LOGROTATE
+
 # --- Deploy apps if configs exist ---
+failed_apps=()
 for app_dir in /opt/appserver/apps/*/; do
   [[ -d "$app_dir" ]] || continue
   app_name=$(basename "$app_dir")
   if [[ -f "$app_dir/docker-compose.yml" ]]; then
     echo "Deploying app: $app_name..."
-    (cd "$app_dir" && docker compose up -d) || echo "WARNING: Failed to start $app_name"
+    (cd "$app_dir" && docker compose up -d) || failed_apps+=("$app_name")
   fi
 done
+
+if [[ $${#failed_apps[@]} -gt 0 ]]; then
+  echo "WARNING: Failed to start apps: $${failed_apps[*]}"
+fi
 
 echo "=== Appserver bootstrap complete at $(date) ==="
