@@ -220,8 +220,9 @@ for app_dir in /opt/appserver/apps/*/; do
   fi
 done
 
-if [[ ${#failed_apps[@]} -gt 0 ]]; then
-  echo "WARNING: Failed to start apps: ${failed_apps[*]}"
+# shellcheck disable=SC2309 # $${} is Terraform templatefile escaping, not a bash expression
+if [[ $${#failed_apps[@]} -gt 0 ]]; then
+  echo "WARNING: Failed to start apps: $${failed_apps[*]}"
 fi
 
 echo "=== Appserver bootstrap complete at $(date) ==="
