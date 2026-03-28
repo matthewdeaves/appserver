@@ -101,7 +101,10 @@
     {
       "Sid": "SSMCommandInvocation",
       "Effect": "Allow",
-      "Action": "ssm:GetCommandInvocation",
+      "Action": [
+        "ssm:GetCommandInvocation",
+        "ssm:DescribeInstanceInformation"
+      ],
       "Resource": "*"
     },
     {
