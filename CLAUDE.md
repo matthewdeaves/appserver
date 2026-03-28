@@ -1,0 +1,93 @@
+# Appserver
+
+Docker app hosting on EC2 behind Cloudflare Tunnel. Each app runs as a Docker Compose stack, routed by Traefik via subdomains (e.g. cookie.matthewdeaves.com).
+
+## Project Structure
+
+```
+terraform/              # All infrastructure (EC2, IAM, SG, tunnel, access, monitoring, snapshots)
+terraform/main.tf       # EC2 instance (t4g.small ARM), security group, IAM role/policies
+terraform/variables.tf  # Input variables (region, domain, subdomains, email, budget)
+terraform/outputs.tf    # Terraform outputs (instance ID, app URLs, SSM command)
+terraform/providers.tf  # AWS + Cloudflare provider configuration
+terraform/versions.tf   # Required provider versions and S3 backend config
+terraform/tunnel.tf     # Cloudflare Tunnel + per-app subdomain DNS CNAMEs
+terraform/access.tf     # Cloudflare Access (email OTP for browser, service token for CLI)
+terraform/monitoring.tf # Monthly budget alarm, EC2 auto-recovery
+terraform/snapshots.tf  # Daily EBS snapshots (DLM policy, 7-day retention)
+terraform/s3.tf         # Artifacts S3 bucket (deploy config, cloudflared fallback)
+terraform/deployer-policies/ # 3 least-privilege IAM policies (compute, iam-ssm, monitoring-storage)
+terraform/appserver-admin-policy.json # Bootstrap IAM policy for admin user
+terraform/terraform.tfvars.example    # Example tfvars
+terraform/.env.example               # Example .env (Cloudflare API token)
+config/traefik/         # Traefik reverse proxy config + compose
+config/apps/            # Per-app Docker Compose files + env examples
+scripts/appserver.sh    # Admin CLI (init, deploy, status, app management)
+scripts/bootstrap.sh    # EC2 user_data (Docker, Traefik, cloudflared)
+.github/workflows/      # CI — terraform fmt, validate, shellcheck, gitleaks
+```
+
+## Key Commands
+
+```bash
+./scripts/appserver.sh init          # Interactive setup (IAM, state bucket, tfvars)
+./scripts/appserver.sh deploy        # terraform init + apply
+./scripts/appserver.sh destroy       # terraform destroy (with confirmation)
+./scripts/appserver.sh status        # Running containers + resource usage
+./scripts/appserver.sh start         # Start EC2 instance
+./scripts/appserver.sh stop          # Stop EC2 instance
+./scripts/appserver.sh ssh           # SSM session to instance
+./scripts/appserver.sh logs [app]    # Container logs
+./scripts/appserver.sh spend         # AWS cost breakdown
+./scripts/appserver.sh app deploy <name>   # Pull image + restart app
+./scripts/appserver.sh app list            # Show all apps + status
+./scripts/appserver.sh app remove <name>   # Stop + remove app
+./scripts/appserver.sh app env <name>      # View/set env vars
+./scripts/appserver.sh config push         # Push config + restart Traefik
+```
+
+## Adding a New App
+
+1. Add subdomain to `app_subdomains` in `terraform/terraform.tfvars`
+2. Create `config/apps/<name>/docker-compose.yml` with Traefik labels
+3. Create `config/apps/<name>/.env.example`
+4. Run `./scripts/appserver.sh deploy` (creates DNS + Access policy)
+5. Run `./scripts/appserver.sh app env <name> KEY=VALUE` to set secrets
+6. Run `./scripts/appserver.sh app deploy <name>` to start
+
+### Required Traefik Labels
+
+```yaml
+labels:
+  - "traefik.enable=true"
+  - "traefik.http.routers.<name>.rule=Host(`<name>.matthewdeaves.com`)"
+  - "traefik.http.routers.<name>.entrypoints=web"
+  - "traefik.http.services.<name>.loadbalancer.server.port=<port>"
+networks:
+  - default
+  - appserver
+```
+
+## Architecture
+
+- **EC2**: t4g.small (ARM/Graviton), Amazon Linux 2023, 20GB gp3 encrypted EBS
+- **Ingress**: Cloudflare Tunnel (zero inbound security group rules)
+- **Auth**: Cloudflare Access — email OTP for browser, service token for CLI
+- **Routing**: Traefik reverse proxy — routes subdomains via Docker labels
+- **Remote access**: AWS SSM (no SSH keys, no open ports)
+- **Monitoring**: Monthly budget alarm ($10), EC2 auto-recovery, daily EBS snapshots (7-day retention)
+
+## Important Notes
+
+- `user_data` (bootstrap.sh) only runs on first boot; use `config push` for runtime updates
+- Traffic flow: Client -> Cloudflare -> Tunnel -> Traefik (:80) -> App container
+- No inbound ports open — EC2 only reachable via Cloudflare Tunnel and SSM
+- ARM architecture (aarch64) — Docker images must support linux/arm64
+- Same AWS account as Rockport — resources isolated by naming/tagging (appserver-*)
+- App secrets (.env files) are NOT uploaded via artifacts — set them via `app env` command
+- Region is read from `terraform.tfvars` by appserver.sh — no hardcoded region
+- Cloudflare API token needs: Zone DNS Edit, Account Cloudflare Tunnel Edit, Account Zero Trust Edit
+- The CLI requires `aws`, `terraform`, and `jq`
+- `deploy` auto-uploads artifacts before running terraform
+- `app deploy` pulls artifacts + latest Docker image, then restarts the compose stack
+- `app remove` preserves Docker volumes — delete manually if needed

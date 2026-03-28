@@ -1,0 +1,13 @@
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/terraform.tfvars
+terraform/.env
+
+# App secrets
+config/apps/*/.env
+!config/apps/*/.env.example
+
+# OS
+.DS_Store

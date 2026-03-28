@@ -1,0 +1,67 @@
+# Cookie — production deployment for appserver
+# Env vars loaded from .env file in same directory
+
+services:
+  db:
+    image: postgres:18-alpine
+    container_name: cookie-db
+    restart: unless-stopped
+    volumes:
+      - cookie-postgres-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: cookie
+      POSTGRES_USER: cookie
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cookie -d cookie"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    image: ghcr.io/matthewdeaves/cookie:latest
+    container_name: cookie-web
+    restart: unless-stopped
+    volumes:
+      - cookie-media:/app/data/media
+    environment:
+      - DEBUG=false
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-cookie.matthewdeaves.com,localhost}
+      - CSRF_TRUSTED_ORIGINS=${CSRF_TRUSTED_ORIGINS:-https://cookie.matthewdeaves.com}
+      - DATABASE_URL=postgres://cookie:${POSTGRES_PASSWORD}@db:5432/cookie
+      - AUTH_MODE=${AUTH_MODE:-home}
+      - SITE_URL=${SITE_URL:-https://cookie.matthewdeaves.com}
+      - EMAIL_BACKEND=${EMAIL_BACKEND:-django.core.mail.backends.console.EmailBackend}
+      - DEFAULT_FROM_EMAIL=${DEFAULT_FROM_EMAIL:-noreply@cookie.local}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/api/system/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.cookie.rule=Host(`cookie.matthewdeaves.com`)"
+      - "traefik.http.routers.cookie.entrypoints=web"
+      - "traefik.http.services.cookie.loadbalancer.server.port=80"
+    networks:
+      - default
+      - appserver
+
+volumes:
+  cookie-postgres-data:
+    name: cookie-postgres-data
+  cookie-media:
+    name: cookie-media
+
+networks:
+  appserver:
+    external: true
+    name: appserver

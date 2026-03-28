@@ -1,0 +1,8 @@
+region                = "eu-west-2"
+domain                = "matthewdeaves.com"
+cloudflare_zone_id    = "your-zone-id"
+cloudflare_account_id = "your-account-id"
+admin_email           = "matt@matthewdeaves.com"
+app_subdomains        = [
+  "cookie",
+]
