@@ -97,3 +97,9 @@ variable "cloudflared_version" {
   type        = string
   default     = "2026.3.0"
 }
+
+variable "cloudflared_sha256" {
+  description = "SHA256 hash of cloudflared-linux-arm64 binary — must update when changing version"
+  type        = string
+  default     = "0755ba4cbab59980e6148367fcf53a8f3ec85a97deefd63c2420cf7850769bee"
+}

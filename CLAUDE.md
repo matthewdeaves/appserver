@@ -32,7 +32,7 @@ scripts/bootstrap.sh    # EC2 user_data (Docker, Traefik, cloudflared)
 ```bash
 ./scripts/appserver.sh init          # Interactive setup (IAM, state bucket, tfvars)
 ./scripts/appserver.sh deploy        # terraform init + apply
-./scripts/appserver.sh destroy       # terraform destroy (with confirmation)
+./scripts/appserver.sh destroy       # terraform destroy + optional bootstrap cleanup
 ./scripts/appserver.sh status        # Running containers + resource usage
 ./scripts/appserver.sh start         # Start EC2 instance
 ./scripts/appserver.sh stop          # Stop EC2 instance
@@ -110,7 +110,7 @@ networks:
 - `deploy` auto-uploads artifacts before running terraform
 - `app deploy` pulls artifacts + latest Docker image, then restarts the compose stack
 - `app remove` preserves Docker volumes — delete manually if needed
-- Cookie image is pinned to a specific version via `COOKIE_VERSION` env var (default: 1.9.3). Update in .env to upgrade
+- Cookie image is pinned to a specific version via `COOKIE_VERSION` env var (default: 1.11.0). Update in .env to upgrade
 - Cookie publishes multi-arch images (amd64 + arm64) via CD workflow on semantic version tags
 - Traefik is pinned to v3.4.0 with health check via `traefik healthcheck --ping`
 - Traefik forwards Cloudflare headers (CF-Connecting-IP, X-Forwarded-For) via `forwardedHeaders.insecure: true`

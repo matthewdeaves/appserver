@@ -56,12 +56,23 @@
         "ssm:GetParameters",
         "ssm:PutParameter",
         "ssm:DeleteParameter",
-        "ssm:DescribeParameters",
         "ssm:ListTagsForResource",
         "ssm:AddTagsToResource",
         "ssm:RemoveTagsFromResource"
       ],
       "Resource": "arn:aws:ssm:*:*:parameter/appserver/*"
+    },
+    {
+      "Sid": "SSMDescribeParameters",
+      "Effect": "Allow",
+      "Action": "ssm:DescribeParameters",
+      "Resource": "*"
+    },
+    {
+      "Sid": "SSMPublicParameters",
+      "Effect": "Allow",
+      "Action": "ssm:GetParameter",
+      "Resource": "arn:aws:ssm:*::parameter/aws/service/*"
     },
     {
       "Sid": "SSMCommandsInstance",

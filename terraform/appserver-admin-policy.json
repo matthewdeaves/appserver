@@ -11,12 +11,31 @@
         "iam:ListPolicyVersions",
         "iam:CreatePolicyVersion",
         "iam:DeletePolicyVersion",
-        "iam:ListAttachedUserPolicies",
-        "iam:AttachUserPolicy"
+        "iam:DeletePolicy"
       ],
       "Resource": [
         "arn:aws:iam::*:policy/Appserver*"
       ]
+    },
+    {
+      "Sid": "AttachDetachAppserverPolicies",
+      "Effect": "Allow",
+      "Action": [
+        "iam:AttachUserPolicy",
+        "iam:DetachUserPolicy"
+      ],
+      "Resource": "arn:aws:iam::*:user/*",
+      "Condition": {
+        "ArnLike": {
+          "iam:PolicyARN": "arn:aws:iam::*:policy/Appserver*"
+        }
+      }
+    },
+    {
+      "Sid": "ListUserPolicies",
+      "Effect": "Allow",
+      "Action": "iam:ListAttachedUserPolicies",
+      "Resource": "arn:aws:iam::*:user/*"
     },
     {
       "Sid": "ManageDeployerUser",
@@ -24,8 +43,13 @@
       "Action": [
         "iam:CreateUser",
         "iam:GetUser",
+        "iam:DeleteUser",
         "iam:ListAccessKeys",
-        "iam:CreateAccessKey"
+        "iam:CreateAccessKey",
+        "iam:DeleteAccessKey",
+        "iam:AttachUserPolicy",
+        "iam:DetachUserPolicy",
+        "iam:ListAttachedUserPolicies"
       ],
       "Resource": "arn:aws:iam::*:user/appserver-deployer"
     },
@@ -34,13 +58,22 @@
       "Effect": "Allow",
       "Action": [
         "s3:CreateBucket",
+        "s3:DeleteBucket",
         "s3:PutBucketVersioning",
-        "s3:PutBucketEncryption",
+        "s3:PutEncryptionConfiguration",
         "s3:PutBucketPublicAccessBlock",
         "s3:PutBucketPolicy",
-        "s3:HeadBucket"
+        "s3:ListBucket",
+        "s3:ListBucketVersions",
+        "s3:GetObject",
+        "s3:DeleteObject",
+        "s3:GetObjectVersion",
+        "s3:DeleteObjectVersion"
       ],
-      "Resource": "arn:aws:s3:::appserver-tfstate-*"
+      "Resource": [
+        "arn:aws:s3:::appserver-tfstate-*",
+        "arn:aws:s3:::appserver-tfstate-*/*"
+      ]
     },
     {
       "Sid": "CostExplorer",

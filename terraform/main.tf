@@ -97,7 +97,7 @@ resource "aws_iam_instance_profile" "appserver" {
 
 resource "aws_security_group" "appserver" {
   name        = "appserver-sg"
-  description = "Appserver instance — no inbound, all outbound"
+  description = "Appserver instance - no inbound, all outbound"
   vpc_id      = data.aws_vpc.default.id
 
   tags = merge(local.common_tags, {
@@ -107,7 +107,7 @@ resource "aws_security_group" "appserver" {
 
 resource "aws_vpc_security_group_egress_rule" "all_outbound" {
   security_group_id = aws_security_group.appserver.id
-  description       = "All outbound — Docker pulls, Cloudflare Tunnel, SSM"
+  description       = "All outbound - Docker pulls, Cloudflare Tunnel, SSM"
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
 }

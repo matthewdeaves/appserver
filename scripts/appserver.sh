@@ -218,7 +218,7 @@ ensure_deployer_access() {
     echo "  1. IAM -> Policies -> Create policy -> JSON tab"
     echo "     Paste contents of: terraform/appserver-admin-policy.json"
     echo "     Name: AppserverAdmin"
-    echo "  2. IAM -> Users -> $caller_user -> Attach policies -> AppserverAdmin"
+    echo "  2. IAM -> Users -> $caller_user (your admin user) -> Attach policies -> AppserverAdmin"
     echo
     echo "Then re-run: ./scripts/appserver.sh init"
     return 1
@@ -271,7 +271,6 @@ ensure_deployer_access() {
     aws configure set aws_secret_access_key "$secret_key" --profile appserver
     aws configure set region "$region" --profile appserver
     aws configure set output json --profile appserver
-    export AWS_PROFILE=appserver
 
     echo "  Access keys .......... created (profile 'appserver' configured)"
   fi
@@ -393,13 +392,32 @@ package_and_upload_artifact() {
   [[ -z "$cf_version" ]] && cf_version=$(grep -A3 'variable "cloudflared_version"' "$TERRAFORM_DIR/variables.tf" | grep default | sed 's/.*= *"//;s/"//' || true)
   if [[ -n "$cf_version" ]]; then
     echo "  Downloading cloudflared $cf_version for S3 fallback..."
+    local cf_sha256
+    cf_sha256=$(grep '^cloudflared_sha256' "$TERRAFORM_DIR/terraform.tfvars" 2>/dev/null | sed 's/.*= *"//;s/"//' || true)
+    [[ -z "$cf_sha256" ]] && cf_sha256=$(grep -A3 'variable "cloudflared_sha256"' "$TERRAFORM_DIR/variables.tf" | grep default | sed 's/.*= *"//;s/"//' || true)
+
     if curl -fsSL --retry 3 --retry-delay 5 \
       "https://github.com/cloudflare/cloudflared/releases/download/$cf_version/cloudflared-linux-arm64" \
       -o "$tmpdir/cloudflared-linux-arm64"; then
-      aws s3 cp "$tmpdir/cloudflared-linux-arm64" \
-        "s3://$bucket/deploy/cloudflared-linux-arm64" \
-        --region "$region" --quiet
-      echo "  cloudflared uploaded to S3 fallback."
+      if [[ -n "$cf_sha256" ]]; then
+        local actual_sha
+        actual_sha=$(sha256sum "$tmpdir/cloudflared-linux-arm64" | awk '{print $1}')
+        if [[ "$actual_sha" != "$cf_sha256" ]]; then
+          echo "  WARNING: cloudflared checksum mismatch — skipping S3 upload"
+          echo "  Expected: $cf_sha256"
+          echo "  Got:      $actual_sha"
+        else
+          aws s3 cp "$tmpdir/cloudflared-linux-arm64" \
+            "s3://$bucket/deploy/cloudflared-linux-arm64" \
+            --region "$region" --quiet
+          echo "  cloudflared uploaded to S3 fallback (checksum verified)."
+        fi
+      else
+        aws s3 cp "$tmpdir/cloudflared-linux-arm64" \
+          "s3://$bucket/deploy/cloudflared-linux-arm64" \
+          --region "$region" --quiet
+        echo "  cloudflared uploaded to S3 fallback (no checksum configured)."
+      fi
     else
       echo "  WARNING: Could not download cloudflared for S3 fallback (GitHub may be unavailable)"
     fi
@@ -526,9 +544,6 @@ cmd_deploy() {
   region="$(get_region)"
   bucket="$(get_state_bucket)"
 
-  echo "Uploading artifacts..."
-  package_and_upload_artifact
-
   echo "Running terraform..."
   cd "$TERRAFORM_DIR" || die "Cannot cd to terraform directory"
   terraform init \
@@ -538,6 +553,10 @@ cmd_deploy() {
     -input=false
 
   terraform apply -input=false -auto-approve
+
+  echo
+  echo "Uploading artifacts..."
+  package_and_upload_artifact
 
   echo
   echo "Deploy complete."
@@ -552,20 +571,121 @@ cmd_destroy() {
   read -rp "Type 'destroy' to confirm: " confirm
   [[ "$confirm" == "destroy" ]] || { echo "Aborted."; return 1; }
 
-  local region bucket
+  local region
   region="$(get_region)"
-  bucket="$(get_state_bucket)"
 
-  cd "$TERRAFORM_DIR" || die "Cannot cd to terraform directory"
-  terraform init \
-    -backend-config="bucket=$bucket" \
-    -backend-config="region=$region" \
-    -backend-config="use_lockfile=true" \
-    -input=false
+  # Terraform destroy (skip if deployer credentials or state backend are inaccessible)
+  local bucket=""
+  bucket="$(get_state_bucket 2>/dev/null)" || true
+  if [[ -n "$bucket" ]] && aws s3api head-bucket --bucket "$bucket" 2>/dev/null; then
+    cd "$TERRAFORM_DIR" || die "Cannot cd to terraform directory"
+    terraform init \
+      -backend-config="bucket=$bucket" \
+      -backend-config="region=$region" \
+      -backend-config="use_lockfile=true" \
+      -input=false
 
-  terraform destroy -input=false -auto-approve
+    terraform destroy -input=false -auto-approve
+    echo "Infrastructure destroyed."
+  else
+    echo "State backend unavailable — skipping terraform destroy."
+    echo "If resources still exist, destroy them manually or restore access first."
+  fi
 
-  echo "Infrastructure destroyed."
+  echo
+  read -rp "Also remove bootstrap resources (IAM deployer, policies, state bucket)? [y/N] " cleanup
+  [[ "$cleanup" =~ ^[Yy]$ ]] || { echo "Bootstrap resources kept."; return 0; }
+
+  echo "Cleaning up bootstrap resources..."
+
+  # Switch away from the deployer profile — the deployer cannot delete itself
+  unset AWS_PROFILE
+  local account_id caller_user
+  local caller_identity
+  caller_identity=$(aws sts get-caller-identity --output json) \
+    || die "Failed to get caller identity — ensure your default AWS profile has admin permissions"
+  account_id=$(echo "$caller_identity" | jq -r '.Account')
+  caller_user=$(echo "$caller_identity" | jq -r '.Arn' | sed 's|.*/||')
+
+  # Derive state bucket name now that we have working credentials
+  local bucket="appserver-tfstate-${account_id}-${region}"
+
+  local deployer_user="appserver-deployer"
+  local deployer_policies=("AppserverDeployerCompute" "AppserverDeployerIamSsm" "AppserverDeployerMonitoringStorage")
+
+  # Detach policies from deployer user and delete access keys
+  if aws iam get-user --user-name "$deployer_user" &>/dev/null; then
+    local keys
+    keys=$(aws iam list-access-keys --user-name "$deployer_user" --query 'AccessKeyMetadata[].AccessKeyId' --output text) || true
+    for key in $keys; do
+      aws iam delete-access-key --user-name "$deployer_user" --access-key-id "$key" 2>/dev/null || true
+      echo "  Access key ........... deleted ($key)"
+    done
+    for name in "${deployer_policies[@]}"; do
+      aws iam detach-user-policy --user-name "$deployer_user" \
+        --policy-arn "arn:aws:iam::${account_id}:policy/${name}" 2>/dev/null || true
+    done
+    aws iam delete-user --user-name "$deployer_user" 2>/dev/null \
+      && echo "  IAM user ............. deleted ($deployer_user)" \
+      || echo "  IAM user ............. failed to delete ($deployer_user)"
+  else
+    echo "  IAM user ............. already gone ($deployer_user)"
+  fi
+
+  # Empty and delete state bucket (before deleting admin policy that grants S3 access)
+  local bucket_status
+  bucket_status=$(aws s3api head-bucket --bucket "$bucket" 2>&1; echo "EXIT:$?")
+  if echo "$bucket_status" | grep -q "EXIT:0"; then
+    echo "  State bucket ......... emptying ($bucket)"
+    aws s3api list-object-versions --bucket "$bucket" --output json 2>/dev/null \
+      | jq -r '.Versions[]? | "\(.Key)\t\(.VersionId)"' \
+      | while IFS=$'\t' read -r key vid; do
+          aws s3api delete-object --bucket "$bucket" --key "$key" --version-id "$vid" 2>/dev/null || true
+        done
+    aws s3api list-object-versions --bucket "$bucket" --output json 2>/dev/null \
+      | jq -r '.DeleteMarkers[]? | "\(.Key)\t\(.VersionId)"' \
+      | while IFS=$'\t' read -r key vid; do
+          aws s3api delete-object --bucket "$bucket" --key "$key" --version-id "$vid" 2>/dev/null || true
+        done
+    aws s3 rb "s3://$bucket" 2>/dev/null \
+      && echo "  State bucket ......... deleted ($bucket)" \
+      || echo "  State bucket ......... failed to delete ($bucket)"
+  elif echo "$bucket_status" | grep -q "403\|Forbidden\|AccessDenied"; then
+    echo "  State bucket ......... exists but access denied ($bucket)"
+    echo "  Delete manually with an admin profile:"
+    echo "    aws s3 rm s3://$bucket --recursive && aws s3 rb s3://$bucket"
+  else
+    echo "  State bucket ......... already gone ($bucket)"
+  fi
+
+  # Detach deployer policies from calling user and delete them
+  for name in "${deployer_policies[@]}"; do
+    local arn="arn:aws:iam::${account_id}:policy/${name}"
+    aws iam detach-user-policy --user-name "$caller_user" --policy-arn "$arn" 2>/dev/null || true
+    delete_all_policy_versions "$arn" 2>/dev/null || true
+    aws iam delete-policy --policy-arn "$arn" 2>/dev/null \
+      && echo "  IAM policy ........... deleted ($name)" \
+      || true
+  done
+  echo "  IAM policy ........... kept (AppserverAdmin — needed for re-init)"
+
+  # Remove appserver AWS profile
+  if command -v python3 &>/dev/null; then
+    python3 -c "
+import configparser, os, sys
+for path, style in [('credentials', False), ('config', True)]:
+    fpath = os.path.expanduser(f'~/.aws/{path}')
+    if not os.path.isfile(fpath): continue
+    cp = configparser.ConfigParser()
+    cp.read(fpath)
+    section = 'profile appserver' if style else 'appserver'
+    if cp.has_section(section):
+        cp.remove_section(section)
+        with open(fpath, 'w') as f: cp.write(f)
+" 2>/dev/null && echo "  AWS profile .......... removed (appserver)" || true
+  fi
+
+  echo "Full cleanup complete."
 }
 
 cmd_status() {
@@ -678,6 +798,14 @@ cmd_app_remove() {
   echo "$app removed. Note: Docker volumes preserved. Remove manually if needed."
 }
 
+cmd_app_restart() {
+  local app="${1:?Usage: appserver app restart <name>}"
+  [[ "$app" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "Invalid app name: $app"
+  echo "Restarting $app..."
+  ssm_run "cd /opt/appserver/apps/$app && docker compose restart 2>&1" 60
+  echo "$app restarted."
+}
+
 cmd_app_init() {
   local app="${1:?Usage: appserver app init <name>}"
   [[ "$app" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "Invalid app name: $app"
@@ -725,11 +853,15 @@ cmd_app_init() {
     echo '$env_b64' | base64 -d > /opt/appserver/apps/$app/.env
     chmod 600 /opt/appserver/apps/$app/.env
     echo '.env written to /opt/appserver/apps/$app/.env'
-  " 15 || die "Failed to upload .env to instance"
+  " 30 || die "Failed to upload .env to instance"
+
+  local domain
+  domain=$(sed -n 's/^domain[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$TERRAFORM_DIR/terraform.tfvars" 2>/dev/null) || true
+  [[ -z "$domain" ]] && domain="<your-domain>"
 
   echo "$app initialized. Next steps:"
   echo "  1. appserver app deploy $app"
-  echo "  2. Visit https://$app.matthewdeaves.com"
+  echo "  2. Visit https://$app.$domain"
   echo "  3. Register your first passkey (first user becomes admin)"
 }
 
@@ -792,7 +924,7 @@ cmd_app_env() {
 
   if [[ $# -eq 0 ]]; then
     # Show current env (mask values for security)
-    ssm_run "if [ -f /opt/appserver/apps/$app/.env ]; then sed 's/=.*/=***/' /opt/appserver/apps/$app/.env; else echo 'No .env file found'; fi" 15
+    ssm_run "if [ -f /opt/appserver/apps/$app/.env ]; then sed 's/=.*/=***/' /opt/appserver/apps/$app/.env; else echo 'No .env file found'; fi" 30
   else
     # Validate all KEY=VALUE pairs before sending
     for kv in "$@"; do
@@ -805,16 +937,24 @@ cmd_app_env() {
     local env_content
     env_content=$(printf '%s\n' "$@" | base64 -w0) || die "Failed to encode env vars"
 
+    # Extract keys to remove existing entries (upsert, not append)
+    local keys_b64
+    keys_b64=$(printf '%s\n' "$@" | sed 's/=.*//' | base64 -w0)
+
     ssm_run "
       set -e
       mkdir -p /opt/appserver/apps/$app
       touch /opt/appserver/apps/$app/.env
       cp /opt/appserver/apps/$app/.env /tmp/appserver-env-new
+      # Remove existing keys so we upsert rather than duplicate
+      for key in \$(echo '$keys_b64' | base64 -d); do
+        sed -i \"/^\${key}=/d\" /tmp/appserver-env-new
+      done
       echo '$env_content' | base64 -d >> /tmp/appserver-env-new
       mv /tmp/appserver-env-new /opt/appserver/apps/$app/.env
       chmod 600 /opt/appserver/apps/$app/.env
       echo 'Updated .env for $app. Run \"appserver app deploy $app\" to apply.'
-    " 15
+    " 30
   fi
 }
 
@@ -841,12 +981,13 @@ case "${1:-}" in
     ;;
   app)
     case "${2:-}" in
-      init)   cmd_app_init "${3:-}" ;;
-      deploy) cmd_app_deploy "${3:-}" ;;
-      list)   cmd_app_list ;;
-      remove) cmd_app_remove "${3:-}" ;;
-      env)    shift 2; cmd_app_env "$@" ;;
-      *)      echo "Usage: appserver app {init|deploy|list|remove|env} [name] [args...]" ;;
+      init)    cmd_app_init "${3:-}" ;;
+      deploy)  cmd_app_deploy "${3:-}" ;;
+      restart) cmd_app_restart "${3:-}" ;;
+      list)    cmd_app_list ;;
+      remove)  cmd_app_remove "${3:-}" ;;
+      env)     shift 2; cmd_app_env "$@" ;;
+      *)       echo "Usage: appserver app {init|deploy|restart|list|remove|env} [name] [args...]" ;;
     esac
     ;;
   *)
@@ -870,6 +1011,7 @@ case "${1:-}" in
     echo "Apps:"
     echo "  app init <name>              Generate secrets and create .env on instance"
     echo "  app deploy <name>            Pull latest image and restart"
+    echo "  app restart <name>           Restart app containers"
     echo "  app list                     Show all apps and status"
     echo "  app remove <name>            Stop and remove app"
     echo "  app env <name> [KEY=VALUE]   View/set environment variables"
