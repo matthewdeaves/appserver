@@ -45,6 +45,8 @@ resource "aws_iam_role" "dlm" {
       }
     }]
   })
+
+  tags = local.common_tags
 }
 
 resource "aws_iam_role_policy_attachment" "dlm" {

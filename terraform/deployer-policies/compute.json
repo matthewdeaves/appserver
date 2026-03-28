@@ -67,8 +67,22 @@
     {
       "Sid": "EC2CreateSecurityGroup",
       "Effect": "Allow",
+      "Action": [
+        "ec2:CreateSecurityGroup",
+        "ec2:CreateTags"
+      ],
+      "Resource": "arn:aws:ec2:*:*:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/Project": "appserver"
+        }
+      }
+    },
+    {
+      "Sid": "EC2CreateSecurityGroupVpc",
+      "Effect": "Allow",
       "Action": "ec2:CreateSecurityGroup",
-      "Resource": "*"
+      "Resource": "arn:aws:ec2:*:*:vpc/*"
     },
     {
       "Sid": "DLM",

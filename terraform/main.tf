@@ -46,6 +46,8 @@ resource "aws_iam_role" "appserver" {
       }
     }]
   })
+
+  tags = local.common_tags
 }
 
 resource "aws_iam_role_policy" "ssm_parameters" {
@@ -147,4 +149,10 @@ resource "aws_instance" "appserver" {
   tags = merge(local.common_tags, {
     Name = "appserver"
   })
+
+  # user_data only runs on first boot — changes should NOT recreate the instance.
+  # Use 'appserver config push' or 'appserver ssh' for runtime updates.
+  lifecycle {
+    ignore_changes = [user_data_base64]
+  }
 }

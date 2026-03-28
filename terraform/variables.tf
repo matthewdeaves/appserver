@@ -12,6 +12,7 @@ variable "region" {
 variable "domain" {
   description = "Base domain (e.g. matthewdeaves.com)"
   type        = string
+  nullable    = false
 
   validation {
     condition     = can(regex("^[a-z0-9][a-z0-9.-]+\\.[a-z]{2,}$", var.domain))
@@ -42,9 +43,14 @@ variable "cloudflare_account_id" {
 }
 
 variable "instance_type" {
-  description = "EC2 instance type (ARM/Graviton)"
+  description = "EC2 instance type (ARM/Graviton recommended for cost)"
   type        = string
   default     = "t4g.small"
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9]+\\.[a-z0-9]+$", var.instance_type))
+    error_message = "Must be a valid EC2 instance type (e.g. t4g.small)."
+  }
 }
 
 variable "app_subdomains" {
@@ -56,12 +62,18 @@ variable "app_subdomains" {
     condition     = length(var.app_subdomains) > 0
     error_message = "At least one app subdomain is required."
   }
+
+  validation {
+    condition     = alltrue([for s in var.app_subdomains : can(regex("^[a-z0-9][a-z0-9-]*$", s))])
+    error_message = "Subdomains must be lowercase alphanumeric with hyphens."
+  }
 }
 
 variable "admin_email" {
   description = "Email for Cloudflare Access OTP and budget alerts"
   type        = string
   sensitive   = true
+  nullable    = false
 
   validation {
     condition     = can(regex("^[^@]+@[^@]+\\.[^@]+$", var.admin_email))

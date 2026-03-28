@@ -30,17 +30,3 @@ resource "cloudflare_zero_trust_access_application" "appserver" {
     }
   ]
 }
-
-# --- Outputs (sensitive) ---
-
-output "cf_access_client_id" {
-  description = "Cloudflare Access service token Client ID — use as CF-Access-Client-Id header"
-  value       = cloudflare_zero_trust_access_service_token.appserver.client_id
-  sensitive   = true
-}
-
-output "cf_access_client_secret" {
-  description = "Cloudflare Access service token Client Secret — use as CF-Access-Client-Secret header"
-  value       = cloudflare_zero_trust_access_service_token.appserver.client_secret
-  sensitive   = true
-}

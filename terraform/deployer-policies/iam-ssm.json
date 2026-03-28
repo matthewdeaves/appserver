@@ -64,20 +64,48 @@
       "Resource": "arn:aws:ssm:*:*:parameter/appserver/*"
     },
     {
-      "Sid": "SSMCommands",
+      "Sid": "SSMCommandsInstance",
       "Effect": "Allow",
       "Action": [
-        "ssm:SendCommand",
-        "ssm:GetCommandInvocation"
+        "ssm:SendCommand"
+      ],
+      "Resource": "arn:aws:ec2:*:*:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "ssm:resourceTag/Project": "appserver"
+        }
+      }
+    },
+    {
+      "Sid": "SSMCommandsDocuments",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:SendCommand"
       ],
       "Resource": [
-        "arn:aws:ec2:*:*:instance/*",
         "arn:aws:ssm:*::document/AWS-RunShellScript",
         "arn:aws:ssm:*::document/AWS-StartInteractiveCommand"
       ]
     },
     {
-      "Sid": "SSMSessions",
+      "Sid": "SSMCommandInvocation",
+      "Effect": "Allow",
+      "Action": "ssm:GetCommandInvocation",
+      "Resource": "*"
+    },
+    {
+      "Sid": "SSMSessionsInstance",
+      "Effect": "Allow",
+      "Action": "ssm:StartSession",
+      "Resource": "arn:aws:ec2:*:*:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "ssm:resourceTag/Project": "appserver"
+        }
+      }
+    },
+    {
+      "Sid": "SSMSessionsDocAndSession",
       "Effect": "Allow",
       "Action": [
         "ssm:StartSession",
@@ -85,7 +113,6 @@
         "ssm:ResumeSession"
       ],
       "Resource": [
-        "arn:aws:ec2:*:*:instance/*",
         "arn:aws:ssm:*:*:session/*",
         "arn:aws:ssm:*::document/AWS-StartInteractiveCommand"
       ]
