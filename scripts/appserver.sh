@@ -838,6 +838,21 @@ cmd_app_init() {
   # Remove comment lines starting with # (keep only actual env vars)
   env_content=$(echo "$env_content" | grep -v '^#' | grep -v '^$')
 
+  # Merge local secrets file if it exists (upserts over .env.example values)
+  local secrets_file="$app_config_dir/.env.secrets"
+  if [[ -f "$secrets_file" ]]; then
+    echo "  Merging secrets from $secrets_file"
+    while IFS= read -r line; do
+      [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
+      local key="${line%%=*}"
+      # Remove existing key then append
+      env_content=$(echo "$env_content" | grep -v "^${key}=")
+      env_content="$env_content"$'\n'"$line"
+    done < "$secrets_file"
+    # Clean up any blank lines
+    env_content=$(echo "$env_content" | grep -v '^$')
+  fi
+
   echo
   echo "Generated .env for $app:"
   echo "$env_content" | sed 's/=.*/=***/'
