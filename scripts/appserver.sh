@@ -855,6 +855,7 @@ cmd_app_init() {
 
   echo
   echo "Generated .env for $app:"
+  # shellcheck disable=SC2001 # sed needed for per-line masking; ${//} is greedy across newlines
   echo "$env_content" | sed 's/=.*/=***/'
   echo
 
