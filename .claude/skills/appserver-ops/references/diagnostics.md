@@ -121,12 +121,21 @@ aws ssm send-command \
 
 Or use the CLI: `./scripts/appserver.sh logs APP`
 
-**Cloudflared logs:**
+**Cloudflared logs (systemd service, NOT a Docker container):**
 ```bash
 aws ssm send-command \
   --instance-ids "$INSTANCE_ID" \
   --document-name "AWS-RunShellScript" \
-  --parameters '{"commands":["docker logs cloudflared --since 10m 2>&1 | grep -iE \"error|ERR|fail\" | tail -20"]}' \
+  --parameters '{"commands":["journalctl -u cloudflared --since \"10 min ago\" --no-pager 2>&1 | grep -iE \"error|ERR|fail|warn\" | tail -20"]}' \
+  --query 'Command.CommandId' --output text --region "$REGION"
+```
+
+**Cloudflared tunnel status:**
+```bash
+aws ssm send-command \
+  --instance-ids "$INSTANCE_ID" \
+  --document-name "AWS-RunShellScript" \
+  --parameters '{"commands":["systemctl is-active cloudflared && cloudflared --version && journalctl -u cloudflared --since \"5 min ago\" --no-pager 2>&1 | grep -iE \"connection|registered|reconnect\" | tail -5"]}' \
   --query 'Command.CommandId' --output text --region "$REGION"
 ```
 
@@ -211,6 +220,153 @@ aws ssm send-command \
 ```
 Returns: `{"ok": true/false, "events": [{"time": "...", "type": "registration|login|device_code", "username": "..."}]}`
 
+Use `--lines N` to control how many audit events to return (default 50).
+
+**List users:**
+```bash
+aws ssm send-command \
+  --instance-ids "$INSTANCE_ID" \
+  --document-name "AWS-RunShellScript" \
+  --parameters '{"commands":["docker exec cookie-web python manage.py cookie_admin list-users --json"]}' \
+  --query 'Command.CommandId' --output text --region "$REGION"
+```
+
+Supports `--active-only` and `--admins-only` filters.
+
+**User management (promote/demote/activate/deactivate):**
+```bash
+# Promote a user to admin
+aws ssm send-command \
+  --instance-ids "$INSTANCE_ID" \
+  --document-name "AWS-RunShellScript" \
+  --parameters '{"commands":["docker exec cookie-web python manage.py cookie_admin promote USERNAME --json"]}' \
+  --query 'Command.CommandId' --output text --region "$REGION"
+
+# Also available: demote, activate, deactivate (same syntax)
+```
+
+**Cleanup stale device codes:**
+```bash
+aws ssm send-command \
+  --instance-ids "$INSTANCE_ID" \
+  --document-name "AWS-RunShellScript" \
+  --parameters '{"commands":["docker exec cookie-web python manage.py cleanup_device_codes --dry-run 2>&1"]}' \
+  --query 'Command.CommandId' --output text --region "$REGION"
+```
+Remove `--dry-run` to actually delete expired/invalidated codes.
+
+**Cleanup stale search images:**
+```bash
+aws ssm send-command \
+  --instance-ids "$INSTANCE_ID" \
+  --document-name "AWS-RunShellScript" \
+  --parameters '{"commands":["docker exec cookie-web python manage.py cleanup_search_images --dry-run 2>&1"]}' \
+  --query 'Command.CommandId' --output text --region "$REGION"
+```
+Supports `--days N` (default 30). Remove `--dry-run` to delete.
+
+**Django security check:**
+```bash
+aws ssm send-command \
+  --instance-ids "$INSTANCE_ID" \
+  --document-name "AWS-RunShellScript" \
+  --parameters '{"commands":["docker exec cookie-web python manage.py check --deploy 2>&1"]}' \
+  --query 'Command.CommandId' --output text --region "$REGION"
+```
+Runs Django's production security checklist (HSTS, CSRF, session security, etc.). Read-only, safe for production.
+
+**Migration status:**
+```bash
+aws ssm send-command \
+  --instance-ids "$INSTANCE_ID" \
+  --document-name "AWS-RunShellScript" \
+  --parameters '{"commands":["docker exec cookie-web python manage.py showmigrations 2>&1"]}' \
+  --query 'Command.CommandId' --output text --region "$REGION"
+```
+Verifies all migrations are applied. Unapplied migrations show as `[ ]` instead of `[X]`.
+
+**Nginx logs (access errors and error log):**
+```bash
+aws ssm send-command \
+  --instance-ids "$INSTANCE_ID" \
+  --document-name "AWS-RunShellScript" \
+  --parameters '{"commands":["echo === 4xx/5xx === && docker exec cookie-web awk \"\\$9 >= 400\" /var/log/nginx/access.log 2>/dev/null | tail -20 && echo === ERROR LOG === && docker exec cookie-web cat /var/log/nginx/error.log 2>/dev/null | tail -20"]}' \
+  --query 'Command.CommandId' --output text --region "$REGION"
+```
+
+## Layer 7: Security Posture
+
+**Verify zero-inbound security group (should have NO inbound rules):**
+```bash
+SG_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+  --query 'Reservations[0].Instances[0].SecurityGroups[0].GroupId' \
+  --output text --region "$REGION")
+
+aws ec2 describe-security-group-rules --filters "Name=group-id,Values=$SG_ID" \
+  --query 'SecurityGroupRules[?!IsEgress].{Protocol:IpProtocol,FromPort:FromPort,ToPort:ToPort,CIDR:CidrIpv4}' \
+  --output table --region "$REGION"
+```
+Expected: empty table (zero inbound rules). Any inbound rule is a security issue.
+
+**CloudWatch alarm status:**
+```bash
+aws cloudwatch describe-alarms --alarm-name-prefix "appserver" \
+  --query 'MetricAlarms[].{Name:AlarmName,State:StateValue,Reason:StateReason}' \
+  --output table --region "$REGION"
+```
+
+**DLM snapshot policy status:**
+```bash
+aws dlm get-lifecycle-policies \
+  --query 'Policies[].{Id:PolicyId,State:State,Description:Description}' \
+  --output table --region "$REGION"
+```
+Should show ENABLED. If ERROR or DISABLED, snapshots aren't happening.
+
+**Cookie security audit (via SSM):**
+```bash
+aws ssm send-command \
+  --instance-ids "$INSTANCE_ID" \
+  --document-name "AWS-RunShellScript" \
+  --parameters '{"commands":["echo === SECURITY AUDIT === && docker exec cookie-web python manage.py cookie_admin audit --json --lines 100 && echo === DJANGO DEPLOY CHECK === && docker exec cookie-web python manage.py check --deploy 2>&1 && echo === USER ACCOUNTS === && docker exec cookie-web python manage.py cookie_admin list-users --json 2>&1"]}' \
+  --query 'Command.CommandId' --output text --region "$REGION"
+```
+
+**Instance role audit (verify least-privilege) — requires admin profile:**
+```bash
+# These commands require admin (unset AWS_PROFILE), deployer cannot list role policies
+unset AWS_PROFILE
+aws iam list-role-policies --role-name appserver-instance-role --output json
+aws iam list-attached-role-policies --role-name appserver-instance-role --output json
+```
+Expected: inline policies `s3-artifacts` and `ssm-parameters`, attached policy `AmazonSSMManagedInstanceCore`. Anything else is unexpected.
+
+## Layer 8: AWS Cost and Budget
+
+**Cost breakdown (last 30 days):**
+```bash
+cd $PROJECT_ROOT
+./scripts/appserver.sh spend
+```
+
+Or directly via AWS CLI:
+```bash
+aws ce get-cost-and-usage \
+  --time-period Start=$(date -d '30 days ago' +%Y-%m-%d),End=$(date +%Y-%m-%d) \
+  --granularity DAILY \
+  --metrics BlendedCost \
+  --filter '{"Tags":{"Key":"Project","Values":["appserver"]}}' \
+  --region us-east-1 --output json
+```
+Note: Cost Explorer API always uses `us-east-1` regardless of resource region.
+
+**Budget alarm status:**
+```bash
+aws budgets describe-budget --account-id "$(aws sts get-caller-identity --query Account --output text)" \
+  --budget-name appserver-monthly-total --region us-east-1 --output json \
+  --query 'Budget.{Limit:BudgetLimit,Actual:CalculatedSpend.ActualSpend}'
+```
+
 ## Using appserver.sh CLI
 
 The CLI wraps many of these operations. For quick checks, prefer the CLI:
@@ -218,10 +374,19 @@ The CLI wraps many of these operations. For quick checks, prefer the CLI:
 ```bash
 cd $PROJECT_ROOT
 ./scripts/appserver.sh status          # Containers + resource usage
-./scripts/appserver.sh logs [app]      # Stream container logs
-./scripts/appserver.sh spend           # AWS cost breakdown
+./scripts/appserver.sh logs [app]      # Container logs (Traefik + all apps, or specific app)
+./scripts/appserver.sh spend           # AWS cost breakdown (last 30 days)
 ./scripts/appserver.sh app list        # All apps + status
 ./scripts/appserver.sh app restart APP # Restart app containers
 ./scripts/appserver.sh app env APP     # View app env vars (masked)
+./scripts/appserver.sh app env APP KEY=VALUE  # Set env vars
 ./scripts/appserver.sh config push     # Push config + restart Traefik
+./scripts/appserver.sh start           # Start stopped EC2 instance
+./scripts/appserver.sh stop            # Stop EC2 instance
+./scripts/appserver.sh ssh             # Interactive SSM session
+./scripts/appserver.sh deploy          # terraform init + apply + upload artifacts
+./scripts/appserver.sh destroy         # terraform destroy + optional cleanup
+./scripts/appserver.sh app init NAME   # Generate secrets + create .env on instance
+./scripts/appserver.sh app deploy NAME # Pull image + restart app
+./scripts/appserver.sh app remove NAME # Stop + remove app (preserves volumes)
 ```

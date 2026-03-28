@@ -3,6 +3,7 @@ name: appserver-ops
 description: "Diagnose, fix, and advise on appserver infrastructure issues. ALWAYS USE THIS SKILL when the user asks anything about appserver infrastructure — including casual questions like 'is it ok', 'is it up', 'is it working', 'check the infra', 'how's the server', 'did the deploy work', or 'is everything healthy'. Also use when: debugging errors (timeouts, 502s, container failures, DNS issues), checking health or status, investigating app deployment problems, troubleshooting Cloudflare Tunnel issues, or when the user mentions appserver is down, broken, slow, or erroring."
 user-invocable: true
 argument-hint: "[symptom or error description]"
+allowed-tools: "Read, Grep, Glob, Bash, Agent"
 ---
 
 ## User Input
@@ -40,9 +41,10 @@ Use the diagnostic procedures in [diagnostics.md](references/diagnostics.md) for
 1. Instance state (running? SSM reachable?)
 2. Container health (Docker containers running? Traefik healthy?)
 3. App health (specific app containers, compose status)
-4. Recent logs (Docker logs for Traefik or specific app)
+4. Recent logs (Docker logs for Traefik, cloudflared, or specific app)
 5. External reachability (curl through Cloudflare Tunnel)
 6. Resource pressure (memory, disk — t4g.small has 2GB)
+7. Security posture (SG rules, Cookie audit, Django deploy checks)
 
 **AWS profile:** Use `AWS_PROFILE=appserver` (deployer) for all diagnostic commands. See [aws-access.md](references/aws-access.md) for role capabilities and escalation.
 
@@ -56,6 +58,15 @@ Based on subagent findings, determine:
 4. **Severity** — operational (restart fixes it) vs. config/code bug vs. infrastructure issue
 
 Consult [common-issues.md](references/common-issues.md) for known symptom-to-cause mappings.
+
+**Cookie app diagnostics:** Use the `cookie_admin` management command for app-level diagnosis. All subcommands support `--json` for structured output:
+- `cookie_admin status --json` — config, DB, migrations, users, passkeys, AI config
+- `cookie_admin audit --json` — recent security events (logins, registrations, device codes)
+- `cookie_admin list-users --json` — all users (supports `--active-only`, `--admins-only`)
+- `cleanup_device_codes --dry-run` — check for expired device codes
+- `cleanup_search_images --dry-run` — check for stale cached search images
+- `python manage.py check --deploy` — Django security checklist
+- `python manage.py showmigrations` — verify all migrations applied
 
 **Immediate operational actions** (restart a stopped instance, restart a container) can be taken now to restore service. But if the root cause is a bug or config issue, a proper fix is still needed.
 
@@ -129,6 +140,9 @@ After the fix is applied:
 - **SSM TimeoutSeconds minimum is 30.** Any `ssm_run` call with a timeout below 30 will fail with `ParamValidation`. All timeouts in the CLI must be >= 30.
 - **Destroy keeps AppserverAdmin policy.** The bootstrap cleanup intentionally preserves the AppserverAdmin IAM policy so that `init` can re-bootstrap without needing root/admin access to recreate it.
 - **Cookie app version upgrades.** To upgrade Cookie: `app env cookie COOKIE_VERSION=X.Y.Z` then `app deploy cookie`. The deploy pulls the new image and restarts. Coordinate with the Cookie repo's CD workflow — wait for the GitHub Actions CD run to complete before deploying.
+- **cloudflared is a systemd service, not a Docker container.** `docker logs cloudflared` will fail with "no such container." Use `systemctl status cloudflared` and `journalctl -u cloudflared` via SSM instead. The binary is at `/usr/local/bin/cloudflared`.
+- **Cookie admin commands all support `--json`.** Always use `--json` when running `cookie_admin` subcommands via SSM — structured output is easier to parse and less error-prone than text output.
+- **`check --deploy` is read-only.** Django's `manage.py check --deploy` runs security checks (HSTS, CSRF, session security) but makes no changes. Safe to run in production at any time.
 
 ## Rules
 

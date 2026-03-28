@@ -49,19 +49,22 @@ unset AWS_PROFILE
 
 ### Compute (deployer-policies/compute.json)
 - EC2: Full describe (including DescribeInstanceCreditSpecifications), create/modify/terminate with `Project=appserver` tag
+- EC2: Describe security group rules (for zero-inbound audits)
 - RunInstances: Instance tagged with `Project=appserver`; passthrough for volumes, network interfaces, images, subnets, security groups
-- DLM: Lifecycle policy management (EBS snapshots)
+- DLM: Lifecycle policy management (EBS snapshots) + GetLifecyclePolicies for status checks
 
 ### IAM + SSM (deployer-policies/iam-ssm.json)
 - IAM: Manage `appserver-*` roles, instance profiles, policies
+- IAM: Read-only on deployer's own user (`GetUser`, `ListAttachedUserPolicies`)
 - SSM: SendCommand + StartSession to appserver-tagged instances
+- SSM: GetCommandInvocation + DescribeInstanceInformation (diagnostics)
 - **Security:** Explicit Deny on privilege escalation beyond Appserver policies
 
 ### Monitoring + Storage (deployer-policies/monitoring-storage.json)
-- CloudWatch: Alarms for `appserver-*` resources
+- CloudWatch: DescribeAlarms for `appserver-*` alarms (auto-recovery status)
 - Budgets: View and modify appserver budget
 - S3: Full access to `appserver-artifacts-*` and state bucket
-- Cost Explorer: Read-only
+- Cost Explorer: Read-only (`ce:GetCostAndUsage`)
 
 ## SSM Command Patterns
 
@@ -101,6 +104,24 @@ aws ssm get-command-invocation \
 | CF Access client ID | Terraform output (sensitive) | `terraform output cf_access_client_id` |
 | CF Access client secret | Terraform output (sensitive) | `terraform output cf_access_client_secret` |
 | App secrets | Instance `/opt/appserver/apps/<name>/.env` | Via `appserver.sh app env` |
+
+## Security Audit Capabilities (Deployer)
+
+The deployer profile can perform these security checks without escalation:
+
+| Check | Command | Expected |
+|-------|---------|----------|
+| Zero inbound SG rules | `ec2 describe-security-group-rules` | No non-egress rules |
+| Auto-recovery alarm | `cloudwatch describe-alarms --alarm-name-prefix appserver` | StateValue: OK |
+| Snapshot policy | `dlm get-lifecycle-policies` | State: ENABLED |
+| Instance role policies | Requires admin — use `iam list-role-policies` | s3-artifacts, ssm-parameters + SSM Core |
+| Cookie security | SSM: `manage.py check --deploy` | 0 issues |
+| Cookie audit trail | SSM: `cookie_admin audit --json` | No unexpected registrations |
+| Cost anomalies | `ce get-cost-and-usage` (us-east-1) | Within budget |
+
+**Cannot do with deployer (requires admin):**
+- `iam:ListRolePolicies` / `iam:ListAttachedRolePolicies` on the instance role
+- Modifying IAM policies directly (changes go through terraform + `init`)
 
 ## Region
 

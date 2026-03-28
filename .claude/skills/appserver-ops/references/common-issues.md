@@ -21,7 +21,7 @@ Known symptom-to-cause mappings for appserver infrastructure. Organized by sympt
 **Symptoms:** Requests hang or get connection refused
 **Causes (in order of likelihood):**
 1. Instance stopped (most common) — check instance state
-2. Cloudflared tunnel not running — check cloudflared container
+2. Cloudflared tunnel not running — check `systemctl status cloudflared` via SSM
 3. Traefik not running — check Traefik container
 4. Instance still bootstrapping after start (~3 min)
 **Fix:** Start instance, wait for services to come up
@@ -100,9 +100,10 @@ Known symptom-to-cause mappings for appserver infrastructure. Organized by sympt
 
 ### Tunnel disconnected
 **Symptoms:** All subdomains unreachable, Cloudflare returns 522 or connection error
-**Cause:** cloudflared container crashed or lost connection
-**Check:** `docker logs cloudflared --tail 30` for connection errors
-**Fix:** Restart cloudflared: `docker restart cloudflared`
+**Cause:** cloudflared systemd service crashed or lost connection
+**Check:** Via SSM: `systemctl status cloudflared` and `journalctl -u cloudflared --since "10 min ago" --no-pager | tail -30`
+**Fix:** Restart cloudflared: `systemctl restart cloudflared` via SSM
+**Note:** cloudflared runs as a systemd service (`/usr/local/bin/cloudflared`), NOT as a Docker container. `docker logs cloudflared` will fail with "no such container."
 
 ### DNS not resolving
 **Symptoms:** Subdomain returns DNS error (NXDOMAIN)
@@ -198,3 +199,56 @@ Known symptom-to-cause mappings for appserver infrastructure. Organized by sympt
 **Cause:** t4g.small has only 2GB RAM
 **Check:** `free -m` and `docker stats --no-stream`
 **Fix:** Add `mem_limit` to app docker-compose.yml, remove unused containers
+
+## Cookie App Issues
+
+### Passkey registration fails
+**Symptoms:** User cannot register a passkey, browser shows WebAuthn error
+**Causes:**
+1. `WEBAUTHN_RP_ID` not set or wrong — must be `matthewdeaves.com` (parent domain)
+2. User accessing via IP or wrong domain — WebAuthn requires HTTPS + correct origin
+3. Browser doesn't support WebAuthn (very old browsers)
+**Check:** `cookie_admin status --json` via SSM — check `webauthn.rp_id`
+
+### Cookie version upgrade issues
+**Symptoms:** App crashes or behaves unexpectedly after `app deploy cookie`
+**Causes:**
+1. New version requires a migration that hasn't run yet — check `showmigrations`
+2. New env vars required but not set — check release notes, then `app env cookie`
+3. Image not yet published for ARM64 — wait for CD workflow to complete
+**Check:** `docker compose logs web --tail 50` for startup errors. Run `cookie_admin status --json` to verify DB and migration state.
+**Fix:** If migrations are pending, they run automatically on container start. If env vars are missing, use `app env cookie KEY=VALUE`.
+
+### Device code pairing not working
+**Symptoms:** 6-char device codes not accepted, or device code screen not loading
+**Causes:**
+1. Expired codes (5-minute TTL) — codes expire quickly
+2. Stale codes accumulating — run `cleanup_device_codes` to clean up
+**Check:** `cookie_admin status --json` — check `device_codes.pending` and `device_codes.stale_expired`
+**Fix:** `cleanup_device_codes` via SSM to purge expired codes
+
+### Slow AI features
+**Symptoms:** Recipe discover, scale, or other AI features take too long
+**Cause:** OpenRouter LLM calls are slow (network + inference time)
+**Check:** `cookie_admin status --json` — verify `openrouter.configured` is true and check the model
+**Note:** Discover endpoint makes parallel LLM calls (since v1.11.0). If still slow, the bottleneck is upstream (OpenRouter/model provider).
+
+### Stale search images consuming disk
+**Symptoms:** Disk usage growing from cached recipe search images
+**Check:** `cleanup_search_images --dry-run` via SSM to see what would be cleaned
+**Fix:** `cleanup_search_images --days 7` via SSM to delete images not accessed in 7 days
+
+## Security Incidents
+
+### Unexpected user registrations
+**Symptoms:** Unknown users appearing in `cookie_admin list-users`
+**Check:** `cookie_admin audit --json --lines 100` — look for registration events from unknown sources
+**Response:**
+1. Deactivate suspicious accounts: `cookie_admin deactivate USERNAME`
+2. Review if Cloudflare Access is properly enforcing auth (should return 302 for unauthenticated)
+3. Check if the registration endpoint is properly protected
+
+### Inbound security group rule added
+**Symptoms:** Security group has inbound rules (should have zero)
+**Check:** `aws ec2 describe-security-group-rules` — any non-egress rule is unexpected
+**Response:** If the rule is in terraform, remove it and run `./scripts/appserver.sh deploy`. If added manually outside terraform, remove via AWS CLI (`aws ec2 revoke-security-group-ingress`) and investigate who/what added it (CloudTrail). All ingress should be via Cloudflare Tunnel only.
