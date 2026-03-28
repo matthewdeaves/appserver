@@ -1,5 +1,6 @@
 # Cookie — production deployment for appserver
 # Env vars loaded from .env file in same directory
+# Generate .env with: appserver app init cookie
 
 services:
   db:
@@ -11,7 +12,7 @@ services:
     environment:
       POSTGRES_DB: cookie
       POSTGRES_USER: cookie
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run 'appserver app init cookie' to generate .env}
     expose:
       - "5432"
     healthcheck:
@@ -21,17 +22,20 @@ services:
       retries: 5
 
   web:
-    image: ghcr.io/matthewdeaves/cookie:${COOKIE_VERSION:-1.9.2}
+    image: ghcr.io/matthewdeaves/cookie:${COOKIE_VERSION:-1.9.3}
     container_name: cookie-web
     restart: unless-stopped
     volumes:
       - cookie-media:/app/data/media
     environment:
       - DEBUG=false
+      - SECRET_KEY=${SECRET_KEY:?Run 'appserver app init cookie' to generate .env}
       - ALLOWED_HOSTS=${ALLOWED_HOSTS:-cookie.matthewdeaves.com,localhost}
       - CSRF_TRUSTED_ORIGINS=${CSRF_TRUSTED_ORIGINS:-https://cookie.matthewdeaves.com}
       - DATABASE_URL=postgres://cookie:${POSTGRES_PASSWORD}@db:5432/cookie
-      - AUTH_MODE=${AUTH_MODE:-home}
+      - AUTH_MODE=${AUTH_MODE:-passkey}
+      - WEBAUTHN_RP_ID=${WEBAUTHN_RP_ID:-matthewdeaves.com}
+      - WEBAUTHN_RP_NAME=${WEBAUTHN_RP_NAME:-Cookie}
       - SITE_URL=${SITE_URL:-https://cookie.matthewdeaves.com}
       - EMAIL_BACKEND=${EMAIL_BACKEND:-django.core.mail.backends.console.EmailBackend}
       - DEFAULT_FROM_EMAIL=${DEFAULT_FROM_EMAIL:-noreply@cookie.local}

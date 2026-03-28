@@ -39,6 +39,7 @@ scripts/bootstrap.sh    # EC2 user_data (Docker, Traefik, cloudflared)
 ./scripts/appserver.sh ssh           # SSM session to instance
 ./scripts/appserver.sh logs [app]    # Container logs
 ./scripts/appserver.sh spend         # AWS cost breakdown
+./scripts/appserver.sh app init <name>     # Generate secrets + create .env on instance
 ./scripts/appserver.sh app deploy <name>   # Pull image + restart app
 ./scripts/appserver.sh app list            # Show all apps + status
 ./scripts/appserver.sh app remove <name>   # Stop + remove app
@@ -46,13 +47,31 @@ scripts/bootstrap.sh    # EC2 user_data (Docker, Traefik, cloudflared)
 ./scripts/appserver.sh config push         # Push config + restart Traefik
 ```
 
+## Deploying Cookie (First Time)
+
+```bash
+./scripts/appserver.sh deploy              # Provision EC2 + Cloudflare
+./scripts/appserver.sh app init cookie     # Auto-generate all secrets
+./scripts/appserver.sh app deploy cookie   # Pull image + start
+# Visit https://cookie.matthewdeaves.com
+# Register your first passkey — first user becomes admin
+```
+
+`app init` auto-generates cryptographically random values for:
+- `POSTGRES_PASSWORD` (32 chars)
+- `SECRET_KEY` (50 chars, Django signing key)
+
+And sets passkey mode defaults:
+- `AUTH_MODE=passkey`
+- `WEBAUTHN_RP_ID=matthewdeaves.com` (parent domain — passkeys work across all subdomains)
+
 ## Adding a New App
 
 1. Add subdomain to `app_subdomains` in `terraform/terraform.tfvars`
 2. Create `config/apps/<name>/docker-compose.yml` with Traefik labels
-3. Create `config/apps/<name>/.env.example`
+3. Create `config/apps/<name>/.env.example` with placeholder secrets
 4. Run `./scripts/appserver.sh deploy` (creates DNS + Access policy)
-5. Run `./scripts/appserver.sh app env <name> KEY=VALUE` to set secrets
+5. Run `./scripts/appserver.sh app init <name>` to generate secrets
 6. Run `./scripts/appserver.sh app deploy <name>` to start
 
 ### Required Traefik Labels
@@ -84,14 +103,14 @@ networks:
 - No inbound ports open — EC2 only reachable via Cloudflare Tunnel and SSM
 - ARM architecture (aarch64) — Docker images must support linux/arm64
 - Same AWS account as Rockport — resources isolated by naming/tagging (appserver-*)
-- App secrets (.env files) are NOT uploaded via artifacts — set them via `app env` command
+- App secrets (.env files) are NOT uploaded via artifacts — use `app init` to generate or `app env` to set
 - Region is read from `terraform.tfvars` by appserver.sh — no hardcoded region
 - Cloudflare API token needs: Zone DNS Edit, Account Cloudflare Tunnel Edit, Account Zero Trust Edit
 - The CLI requires `aws`, `terraform`, and `jq`
 - `deploy` auto-uploads artifacts before running terraform
 - `app deploy` pulls artifacts + latest Docker image, then restarts the compose stack
 - `app remove` preserves Docker volumes — delete manually if needed
-- Cookie image is pinned to a specific version via `COOKIE_VERSION` env var (default: 1.9.2). Update in .env to upgrade
+- Cookie image is pinned to a specific version via `COOKIE_VERSION` env var (default: 1.9.3). Update in .env to upgrade
 - Cookie publishes multi-arch images (amd64 + arm64) via CD workflow on semantic version tags
 - Traefik is pinned to v3.4.0 with health check via `traefik healthcheck --ping`
 - Traefik forwards Cloudflare headers (CF-Connecting-IP, X-Forwarded-For) via `forwardedHeaders.insecure: true`
@@ -99,3 +118,9 @@ networks:
 - SSM commands use `jq` for safe JSON encoding (no string interpolation injection)
 - `app env` masks values when displaying (shows KEY=***) and validates KEY=VALUE format
 - Bootstrap retries tunnel token fetch 5 times with 10s backoff
+- Cookie runs in passkey (WebAuthn) auth mode — no passwords, biometric/PIN only
+- `WEBAUTHN_RP_ID` is set to `matthewdeaves.com` (parent domain) so passkeys work across all subdomains
+- First user to register at `/register` is automatically promoted to admin
+- `app init` generates POSTGRES_PASSWORD and SECRET_KEY with `openssl rand` — never uses defaults
+- Django SECRET_KEY must persist across container restarts (stored in .env on instance)
+- Device code flow allows legacy devices without WebAuthn support to pair via 6-char codes

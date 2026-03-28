@@ -678,6 +678,61 @@ cmd_app_remove() {
   echo "$app removed. Note: Docker volumes preserved. Remove manually if needed."
 }
 
+cmd_app_init() {
+  local app="${1:?Usage: appserver app init <name>}"
+  [[ "$app" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "Invalid app name: $app"
+
+  local app_config_dir="$CONFIG_DIR/apps/$app"
+  if [[ ! -f "$app_config_dir/.env.example" ]]; then
+    die "No .env.example found for app '$app' in config/apps/$app/"
+  fi
+
+  echo "Initializing $app..."
+  echo
+
+  # Generate cryptographically random secrets
+  local postgres_password secret_key
+  postgres_password=$(openssl rand -base64 32 | tr -d '/+=' | head -c 32) \
+    || die "Failed to generate POSTGRES_PASSWORD"
+  secret_key=$(openssl rand -base64 64 | tr -d '/+=' | head -c 50) \
+    || die "Failed to generate SECRET_KEY"
+
+  echo "  Generated POSTGRES_PASSWORD (32 chars)"
+  echo "  Generated SECRET_KEY (50 chars)"
+
+  # Build the .env from the example, replacing placeholders
+  local env_content
+  env_content=$(sed \
+    -e "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$postgres_password|" \
+    -e "s|^SECRET_KEY=.*|SECRET_KEY=$secret_key|" \
+    "$app_config_dir/.env.example") || die "Failed to process .env.example"
+
+  # Remove comment lines starting with # (keep only actual env vars)
+  env_content=$(echo "$env_content" | grep -v '^#' | grep -v '^$')
+
+  echo
+  echo "Generated .env for $app:"
+  echo "$env_content" | sed 's/=.*/=***/'
+  echo
+
+  # Upload to instance via SSM
+  local env_b64
+  env_b64=$(echo "$env_content" | base64 -w0) || die "Failed to encode .env"
+
+  ssm_run "
+    set -e
+    mkdir -p /opt/appserver/apps/$app
+    echo '$env_b64' | base64 -d > /opt/appserver/apps/$app/.env
+    chmod 600 /opt/appserver/apps/$app/.env
+    echo '.env written to /opt/appserver/apps/$app/.env'
+  " 15 || die "Failed to upload .env to instance"
+
+  echo "$app initialized. Next steps:"
+  echo "  1. appserver app deploy $app"
+  echo "  2. Visit https://$app.matthewdeaves.com"
+  echo "  3. Register your first passkey (first user becomes admin)"
+}
+
 cmd_config_push() {
   echo "Pushing config to instance..."
   package_and_upload_artifact
@@ -786,11 +841,12 @@ case "${1:-}" in
     ;;
   app)
     case "${2:-}" in
+      init)   cmd_app_init "${3:-}" ;;
       deploy) cmd_app_deploy "${3:-}" ;;
       list)   cmd_app_list ;;
       remove) cmd_app_remove "${3:-}" ;;
       env)    shift 2; cmd_app_env "$@" ;;
-      *)      echo "Usage: appserver app {deploy|list|remove|env} [name] [args...]" ;;
+      *)      echo "Usage: appserver app {init|deploy|list|remove|env} [name] [args...]" ;;
     esac
     ;;
   *)
@@ -812,6 +868,7 @@ case "${1:-}" in
     echo "  spend         AWS cost breakdown"
     echo
     echo "Apps:"
+    echo "  app init <name>              Generate secrets and create .env on instance"
     echo "  app deploy <name>            Pull latest image and restart"
     echo "  app list                     Show all apps and status"
     echo "  app remove <name>            Stop and remove app"
