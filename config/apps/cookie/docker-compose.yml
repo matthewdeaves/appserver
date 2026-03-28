@@ -39,6 +39,7 @@ services:
       - SITE_URL=${SITE_URL:-https://cookie.matthewdeaves.com}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - SECURE_SSL_REDIRECT=${SECURE_SSL_REDIRECT:-true}
+      - COOKIE_VERSION=${COOKIE_VERSION:-dev}
       - LOG_FORMAT=${LOG_FORMAT:-json}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     depends_on:
