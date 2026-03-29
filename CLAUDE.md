@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # Appserver
 
 Docker app hosting on EC2 behind Cloudflare Tunnel. Each app runs as a Docker Compose stack, routed by Traefik via subdomains (e.g. cookie.matthewdeaves.com).
@@ -85,6 +89,16 @@ labels:
 networks:
   - default
   - appserver
+```
+
+## Linting and Validation
+
+CI runs on push/PR to main (`.github/workflows/validate.yml`). Run locally before committing:
+
+```bash
+terraform -chdir=terraform fmt -check -recursive   # Terraform formatting
+terraform -chdir=terraform init -backend=false && terraform -chdir=terraform validate  # Terraform validation
+shellcheck scripts/*.sh                             # Shell script linting
 ```
 
 ## Architecture
