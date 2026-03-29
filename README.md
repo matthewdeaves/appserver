@@ -22,7 +22,7 @@ Client → Cloudflare → Tunnel → Traefik (:80) → App container
 - AWS CLI (configured with credentials)
 - Terraform
 - jq
-- Cloudflare API token with: Zone DNS Edit, Cloudflare Tunnel Edit, Zero Trust Edit
+- Cloudflare API token with: Zone DNS Edit, Zone Settings Edit, Zone WAF Edit, Cloudflare Tunnel Edit, Zero Trust Edit
 
 ## Quick Start
 
@@ -49,6 +49,7 @@ appserver.sh app init <name>       Generate secrets + .env on instance
 appserver.sh app deploy <name>     Pull image + restart
 appserver.sh app list              All apps + status
 appserver.sh app remove <name>     Stop + remove (preserves volumes)
+appserver.sh app restart <name>    Restart app containers
 appserver.sh app env <name>        View/set environment variables
 appserver.sh config push           Push config + restart Traefik
 ```
@@ -63,11 +64,11 @@ appserver.sh config push           Push config + restart Traefik
 ## Project Layout
 
 ```
-terraform/          Infrastructure (EC2, IAM, Cloudflare Tunnel/DNS/Access, monitoring, snapshots)
+terraform/          Infrastructure (EC2, IAM, Cloudflare Tunnel/DNS/Access, WAF, monitoring, snapshots)
 config/traefik/     Traefik reverse proxy config + compose
 config/apps/        Per-app Docker Compose stacks + env examples
 scripts/            appserver.sh (admin CLI) + bootstrap.sh (EC2 user_data)
-.github/workflows/  CI: terraform fmt/validate, shellcheck, gitleaks
+.github/            CI (terraform fmt/validate, shellcheck, gitleaks) + Dependabot config
 ```
 
 ## Security

@@ -20,6 +20,7 @@ terraform/access.tf     # Cloudflare Access (email OTP for browser, service toke
 terraform/monitoring.tf # Monthly budget alarm, EC2 auto-recovery
 terraform/snapshots.tf  # Daily EBS snapshots (DLM policy, 7-day retention)
 terraform/s3.tf         # Artifacts S3 bucket (deploy config, cloudflared fallback)
+terraform/security.tf   # Cloudflare WAF rate limiting + zone security settings
 terraform/deployer-policies/ # 3 least-privilege IAM policies (compute, iam-ssm, monitoring-storage)
 terraform/appserver-admin-policy.json # Bootstrap IAM policy for admin user
 terraform/terraform.tfvars.example    # Example tfvars
@@ -29,6 +30,9 @@ config/apps/            # Per-app Docker Compose files + env examples
 scripts/appserver.sh    # Admin CLI (init, deploy, status, app management)
 scripts/bootstrap.sh    # EC2 user_data (Docker, Traefik, cloudflared)
 .github/workflows/      # CI — terraform fmt, validate, shellcheck, gitleaks
+.github/dependabot.yml  # Dependabot version updates (Terraform, Actions, Docker)
+SECURITY.md             # Vulnerability reporting policy
+README.md               # Project overview
 ```
 
 ## Key Commands
@@ -47,6 +51,7 @@ scripts/bootstrap.sh    # EC2 user_data (Docker, Traefik, cloudflared)
 ./scripts/appserver.sh app deploy <name>   # Pull image + restart app
 ./scripts/appserver.sh app list            # Show all apps + status
 ./scripts/appserver.sh app remove <name>   # Stop + remove app
+./scripts/appserver.sh app restart <name>  # Restart app containers
 ./scripts/appserver.sh app env <name>      # View/set env vars
 ./scripts/appserver.sh config push         # Push config + restart Traefik
 ```
@@ -119,7 +124,7 @@ shellcheck scripts/*.sh                             # Shell script linting
 - Same AWS account as Rockport — resources isolated by naming/tagging (appserver-*)
 - App secrets (.env files) are NOT uploaded via artifacts — use `app init` to generate or `app env` to set
 - Region is read from `terraform.tfvars` by appserver.sh — no hardcoded region
-- Cloudflare API token needs: Zone DNS Edit, Account Cloudflare Tunnel Edit, Account Zero Trust Edit
+- Cloudflare API token needs: Zone DNS Edit, Zone Settings Edit, Zone WAF Edit, Account Cloudflare Tunnel Edit, Account Zero Trust Edit
 - The CLI requires `aws`, `terraform`, and `jq`
 - `deploy` auto-uploads artifacts before running terraform
 - `app deploy` pulls artifacts + latest Docker image, then restarts the compose stack
