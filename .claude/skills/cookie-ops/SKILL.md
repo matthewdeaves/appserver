@@ -28,7 +28,7 @@ Input can be:
 
 | Task | Command |
 |------|---------|
-| Deploy new version | `app env cookie COOKIE_VERSION=X.Y.Z` then `app deploy cookie` |
+| Deploy new version | Update version in `docker-compose.yml`, `config push`, `app deploy cookie` |
 | Check status | `cookie_admin status --json` via SSM |
 | View logs | `./scripts/appserver.sh logs cookie` |
 | Security audit | `cookie_admin audit --json` via SSM |
@@ -47,11 +47,15 @@ Input can be:
 ### For version upgrades
 
 1. Verify the image exists on GHCR (CD workflow must be complete)
-2. `./scripts/appserver.sh app env cookie COOKIE_VERSION=X.Y.Z`
-3. `./scripts/appserver.sh app deploy cookie`
-4. **Watch for crash loops** — check container status within 30 seconds
-5. If crash-looping, roll back immediately: set previous version and redeploy
-6. Run `cookie_admin status --json` to verify health post-deploy
+2. Update version in `config/apps/cookie/docker-compose.yml` (image tag default + `COOKIE_VERSION` env default)
+3. Update version in `config/apps/cookie/.env.example` (for documentation)
+4. Update version reference in `CLAUDE.md`
+5. `./scripts/appserver.sh config push` then `./scripts/appserver.sh app deploy cookie`
+6. **Watch for crash loops** — check container status within 30 seconds
+7. If crash-looping, roll back: revert compose file, `config push`, `app deploy`
+8. Run `cookie_admin status --json` to verify health post-deploy
+
+**Important:** The version is pinned in `docker-compose.yml` only (single source of truth). Do NOT set `COOKIE_VERSION` in the instance `.env` — the compose default is authoritative.
 
 ### For user/auth management
 

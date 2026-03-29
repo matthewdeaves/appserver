@@ -37,7 +37,7 @@ Symptom-to-cause mappings for Cookie app issues. For infrastructure-level issues
 3. **New env vars required** — Check release notes for new required configuration.
 4. **Migration failure** — Check `docker logs cookie-web-1 --tail 50` for migration errors.
 
-**Immediate fix:** Roll back: `app env cookie COOKIE_VERSION=<previous>` then `app deploy cookie`
+**Immediate fix:** Roll back: revert version in `docker-compose.yml`, `config push`, then `app deploy cookie`
 **Key lesson:** Always check container status within 30 seconds of deploying a new version.
 
 ## Cron Jobs Not Firing
