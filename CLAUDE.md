@@ -110,7 +110,7 @@ networks:
 - `deploy` auto-uploads artifacts before running terraform
 - `app deploy` pulls artifacts + latest Docker image, then restarts the compose stack
 - `app remove` preserves Docker volumes — delete manually if needed
-- Cookie image is pinned to a specific version via `COOKIE_VERSION` env var (default: 1.11.2). Update in .env to upgrade
+- Cookie image is pinned to a specific version via `COOKIE_VERSION` env var (default: 1.13.0). Update in .env to upgrade
 - Cookie publishes multi-arch images (amd64 + arm64) via CD workflow on semantic version tags
 - Traefik is pinned to v3.4.0 with health check via `traefik healthcheck --ping`
 - Traefik forwards Cloudflare headers (CF-Connecting-IP, X-Forwarded-For) via `forwardedHeaders.insecure: true`
@@ -124,3 +124,6 @@ networks:
 - `app init` generates POSTGRES_PASSWORD and SECRET_KEY with `openssl rand` — never uses defaults
 - Django SECRET_KEY must persist across container restarts (stored in .env on instance)
 - Device code flow allows legacy devices without WebAuthn support to pair via 6-char codes
+- Cookie v1.13.0+ has built-in cron jobs: `cleanup_device_codes` (hourly), `cleanup_sessions` (daily 3:15 AM), `cleanup_search_images` (daily 3:30 AM)
+- `cookie_admin status --json` includes `maintenance` block with last-run timestamps for each cron job and `device_codes` counts (pending/stale)
+- Cron output is redirected to container stdout (`/proc/1/fd/1`) so it appears in `docker logs`

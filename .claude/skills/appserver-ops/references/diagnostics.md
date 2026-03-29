@@ -2,6 +2,8 @@
 
 Layer-by-layer diagnostic commands for appserver infrastructure. Use these in subagents to keep raw output out of the main context.
 
+For Cookie-specific diagnostics (cookie_admin, cron jobs, cleanup commands), see `/cookie-ops`.
+
 ## Prerequisites
 
 All commands use the deployer AWS profile unless noted otherwise.
@@ -196,105 +198,7 @@ aws ssm send-command \
 
 Or use the CLI: `./scripts/appserver.sh app restart APP`
 
-## Cookie App Diagnostics
-
-Cookie provides management commands that return JSON — ideal for SSM-based diagnostics:
-
-**Post-deploy health check:**
-```bash
-aws ssm send-command \
-  --instance-ids "$INSTANCE_ID" \
-  --document-name "AWS-RunShellScript" \
-  --parameters '{"commands":["docker exec cookie-web python manage.py cookie_admin status --json"]}' \
-  --query 'Command.CommandId' --output text --region "$REGION"
-```
-Returns: `{"ok": true/false, "auth_mode": "...", "database": "...", "migrations": "...", "users": {...}, "passkeys": N, "webauthn": {...}}`
-
-**Security audit (last 24h):**
-```bash
-aws ssm send-command \
-  --instance-ids "$INSTANCE_ID" \
-  --document-name "AWS-RunShellScript" \
-  --parameters '{"commands":["docker exec cookie-web python manage.py cookie_admin audit --json"]}' \
-  --query 'Command.CommandId' --output text --region "$REGION"
-```
-Returns: `{"ok": true/false, "events": [{"time": "...", "type": "registration|login|device_code", "username": "..."}]}`
-
-Use `--lines N` to control how many audit events to return (default 50).
-
-**List users:**
-```bash
-aws ssm send-command \
-  --instance-ids "$INSTANCE_ID" \
-  --document-name "AWS-RunShellScript" \
-  --parameters '{"commands":["docker exec cookie-web python manage.py cookie_admin list-users --json"]}' \
-  --query 'Command.CommandId' --output text --region "$REGION"
-```
-
-Supports `--active-only` and `--admins-only` filters.
-
-**User management (promote/demote/activate/deactivate):**
-```bash
-# Promote a user to admin
-aws ssm send-command \
-  --instance-ids "$INSTANCE_ID" \
-  --document-name "AWS-RunShellScript" \
-  --parameters '{"commands":["docker exec cookie-web python manage.py cookie_admin promote USERNAME --json"]}' \
-  --query 'Command.CommandId' --output text --region "$REGION"
-
-# Also available: demote, activate, deactivate (same syntax)
-```
-
-**Cleanup stale device codes:**
-```bash
-aws ssm send-command \
-  --instance-ids "$INSTANCE_ID" \
-  --document-name "AWS-RunShellScript" \
-  --parameters '{"commands":["docker exec cookie-web python manage.py cleanup_device_codes --dry-run 2>&1"]}' \
-  --query 'Command.CommandId' --output text --region "$REGION"
-```
-Remove `--dry-run` to actually delete expired/invalidated codes.
-
-**Cleanup stale search images:**
-```bash
-aws ssm send-command \
-  --instance-ids "$INSTANCE_ID" \
-  --document-name "AWS-RunShellScript" \
-  --parameters '{"commands":["docker exec cookie-web python manage.py cleanup_search_images --dry-run 2>&1"]}' \
-  --query 'Command.CommandId' --output text --region "$REGION"
-```
-Supports `--days N` (default 30). Remove `--dry-run` to delete.
-
-**Django security check:**
-```bash
-aws ssm send-command \
-  --instance-ids "$INSTANCE_ID" \
-  --document-name "AWS-RunShellScript" \
-  --parameters '{"commands":["docker exec cookie-web python manage.py check --deploy 2>&1"]}' \
-  --query 'Command.CommandId' --output text --region "$REGION"
-```
-Runs Django's production security checklist (HSTS, CSRF, session security, etc.). Read-only, safe for production.
-
-**Migration status:**
-```bash
-aws ssm send-command \
-  --instance-ids "$INSTANCE_ID" \
-  --document-name "AWS-RunShellScript" \
-  --parameters '{"commands":["docker exec cookie-web python manage.py showmigrations 2>&1"]}' \
-  --query 'Command.CommandId' --output text --region "$REGION"
-```
-Verifies all migrations are applied. Unapplied migrations show as `[ ]` instead of `[X]`.
-
-**Nginx logs (access errors and error log):**
-```bash
-aws ssm send-command \
-  --instance-ids "$INSTANCE_ID" \
-  --document-name "AWS-RunShellScript" \
-  --parameters '{"commands":["echo === 4xx/5xx === && docker exec cookie-web awk \"\\$9 >= 400\" /var/log/nginx/access.log 2>/dev/null | tail -20 && echo === ERROR LOG === && docker exec cookie-web cat /var/log/nginx/error.log 2>/dev/null | tail -20"]}' \
-  --query 'Command.CommandId' --output text --region "$REGION"
-```
-
-## Layer 7: Security Posture
+## Layer 8: Security Posture
 
 **Verify zero-inbound security group (should have NO inbound rules):**
 ```bash
@@ -323,15 +227,6 @@ aws dlm get-lifecycle-policies \
 ```
 Should show ENABLED. If ERROR or DISABLED, snapshots aren't happening.
 
-**Cookie security audit (via SSM):**
-```bash
-aws ssm send-command \
-  --instance-ids "$INSTANCE_ID" \
-  --document-name "AWS-RunShellScript" \
-  --parameters '{"commands":["echo === SECURITY AUDIT === && docker exec cookie-web python manage.py cookie_admin audit --json --lines 100 && echo === DJANGO DEPLOY CHECK === && docker exec cookie-web python manage.py check --deploy 2>&1 && echo === USER ACCOUNTS === && docker exec cookie-web python manage.py cookie_admin list-users --json 2>&1"]}' \
-  --query 'Command.CommandId' --output text --region "$REGION"
-```
-
 **Instance role audit (verify least-privilege) — requires admin profile:**
 ```bash
 # These commands require admin (unset AWS_PROFILE), deployer cannot list role policies
@@ -341,7 +236,7 @@ aws iam list-attached-role-policies --role-name appserver-instance-role --output
 ```
 Expected: inline policies `s3-artifacts` and `ssm-parameters`, attached policy `AmazonSSMManagedInstanceCore`. Anything else is unexpected.
 
-## Layer 8: AWS Cost and Budget
+## Layer 9: AWS Cost and Budget
 
 **Cost breakdown (last 30 days):**
 ```bash
