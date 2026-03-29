@@ -43,6 +43,19 @@ fi
 # --- Docker ---
 echo "Installing Docker..."
 dnf install -y docker || die "Failed to install Docker"
+
+# Configure Docker log rotation (prevent unbounded log growth on 20GB EBS)
+mkdir -p /etc/docker
+cat > /etc/docker/daemon.json <<'DOCKERCFG'
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "50m",
+    "max-file": "3"
+  }
+}
+DOCKERCFG
+
 systemctl enable --now docker || die "Failed to start Docker"
 
 # Docker Compose plugin (ARM)
