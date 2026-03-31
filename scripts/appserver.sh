@@ -374,7 +374,7 @@ package_and_upload_artifact() {
     || die "Failed to generate artifact checksum"
 
   # Upload to S3
-  echo "  Uploading artifact to s3://$bucket/deploy/appserver-artifact.tar.gz..."
+  echo "  Uploading artifact to S3..."
   aws s3 cp "$tmpdir/appserver-artifact.tar.gz" \
     "s3://$bucket/deploy/appserver-artifact.tar.gz" \
     --region "$region" --quiet || {
