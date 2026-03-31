@@ -68,6 +68,11 @@ get_instance_id() {
   echo "$CACHED_INSTANCE_ID"
 }
 
+# Mask AWS account IDs (12-digit sequences in ARNs/S3 URLs) in command output
+mask_account_ids() {
+  sed -E 's/(arn:aws:[^:]*:[^:]*:)[0-9]{12}:/\1****:/g; s/(appserver-[a-z]+-)[0-9]{12}(-)/\1****\2/g'
+}
+
 get_state_bucket() {
   local region account_id
   region="$(get_region)"
@@ -282,13 +287,13 @@ ensure_state_backend() {
   bucket="$(get_state_bucket)"
 
   if aws s3api head-bucket --bucket "$bucket" --region "$region" >/dev/null 2>&1; then
-    echo "  State bucket ......... ok ($bucket)"
+    echo "  State bucket ......... ok"
   else
     aws s3api create-bucket \
       --bucket "$bucket" \
       --region "$region" \
       --create-bucket-configuration LocationConstraint="$region" >/dev/null || {
-      echo "ERROR: Failed to create S3 state bucket '$bucket'" >&2
+      echo "ERROR: Failed to create S3 state bucket" >&2
       return 1
     }
 
@@ -296,21 +301,21 @@ ensure_state_backend() {
       --bucket "$bucket" \
       --region "$region" \
       --versioning-configuration Status=Enabled \
-      || die "Failed to enable bucket versioning on $bucket"
+      || die "Failed to enable bucket versioning"
 
     aws s3api put-bucket-encryption \
       --bucket "$bucket" \
       --region "$region" \
       --server-side-encryption-configuration '{
         "Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}, "BucketKeyEnabled": true}]
-      }' || die "Failed to enable bucket encryption on $bucket"
+      }' || die "Failed to enable bucket encryption"
 
     aws s3api put-public-access-block \
       --bucket "$bucket" \
       --region "$region" \
       --public-access-block-configuration \
         BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true \
-      || die "Failed to set public access block on $bucket"
+      || die "Failed to set public access block"
 
     aws s3api put-bucket-policy \
       --bucket "$bucket" \
@@ -330,9 +335,9 @@ ensure_state_backend() {
             \"Bool\": { \"aws:SecureTransport\": \"false\" }
           }
         }]
-      }" || die "Failed to set bucket policy on $bucket"
+      }" || die "Failed to set bucket policy"
 
-    echo "  State bucket ......... created ($bucket)"
+    echo "  State bucket ......... created"
   fi
 }
 
@@ -550,9 +555,9 @@ cmd_deploy() {
     -backend-config="bucket=$bucket" \
     -backend-config="region=$region" \
     -backend-config="use_lockfile=true" \
-    -input=false
+    -input=false 2>&1 | mask_account_ids
 
-  terraform apply -input=false -auto-approve
+  terraform apply -input=false -auto-approve 2>&1 | mask_account_ids
 
   echo
   echo "Uploading artifacts..."
@@ -583,9 +588,9 @@ cmd_destroy() {
       -backend-config="bucket=$bucket" \
       -backend-config="region=$region" \
       -backend-config="use_lockfile=true" \
-      -input=false
+      -input=false 2>&1 | mask_account_ids
 
-    terraform destroy -input=false -auto-approve
+    terraform destroy -input=false -auto-approve 2>&1 | mask_account_ids
     echo "Infrastructure destroyed."
   else
     echo "State backend unavailable — skipping terraform destroy."
@@ -619,7 +624,7 @@ cmd_destroy() {
     keys=$(aws iam list-access-keys --user-name "$deployer_user" --query 'AccessKeyMetadata[].AccessKeyId' --output text) || true
     for key in $keys; do
       aws iam delete-access-key --user-name "$deployer_user" --access-key-id "$key" 2>/dev/null || true
-      echo "  Access key ........... deleted ($key)"
+      echo "  Access key ........... deleted"
     done
     for name in "${deployer_policies[@]}"; do
       aws iam detach-user-policy --user-name "$deployer_user" \
@@ -636,7 +641,7 @@ cmd_destroy() {
   local bucket_status
   bucket_status=$(aws s3api head-bucket --bucket "$bucket" 2>&1; echo "EXIT:$?")
   if echo "$bucket_status" | grep -q "EXIT:0"; then
-    echo "  State bucket ......... emptying ($bucket)"
+    echo "  State bucket ......... emptying"
     aws s3api list-object-versions --bucket "$bucket" --output json 2>/dev/null \
       | jq -r '.Versions[]? | "\(.Key)\t\(.VersionId)"' \
       | while IFS=$'\t' read -r key vid; do
@@ -648,12 +653,11 @@ cmd_destroy() {
           aws s3api delete-object --bucket "$bucket" --key "$key" --version-id "$vid" 2>/dev/null || true
         done
     aws s3 rb "s3://$bucket" 2>/dev/null \
-      && echo "  State bucket ......... deleted ($bucket)" \
-      || echo "  State bucket ......... failed to delete ($bucket)"
+      && echo "  State bucket ......... deleted" \
+      || echo "  State bucket ......... failed to delete"
   elif echo "$bucket_status" | grep -q "403\|Forbidden\|AccessDenied"; then
-    echo "  State bucket ......... exists but access denied ($bucket)"
-    echo "  Delete manually with an admin profile:"
-    echo "    aws s3 rm s3://$bucket --recursive && aws s3 rb s3://$bucket"
+    echo "  State bucket ......... exists but access denied"
+    echo "  Delete manually with an admin profile (bucket name in terraform output)"
   else
     echo "  State bucket ......... already gone ($bucket)"
   fi
@@ -753,7 +757,7 @@ cmd_app_deploy() {
     APP='$app'
 
     # Pull latest artifacts
-    aws s3 cp \"s3://\$BUCKET/deploy/appserver-artifact.tar.gz\" /tmp/appserver-artifact.tar.gz --region \"\$REGION\"
+    aws s3 cp \"s3://\$BUCKET/deploy/appserver-artifact.tar.gz\" /tmp/appserver-artifact.tar.gz --region \"\$REGION\" --quiet
     tar xzf /tmp/appserver-artifact.tar.gz -C /tmp/
 
     # Update app config (compose file)
@@ -891,7 +895,7 @@ cmd_config_push() {
 
   ssm_run "
     set -e
-    aws s3 cp 's3://$bucket/deploy/appserver-artifact.tar.gz' /tmp/appserver-artifact.tar.gz --region '$region'
+    aws s3 cp 's3://$bucket/deploy/appserver-artifact.tar.gz' /tmp/appserver-artifact.tar.gz --region '$region' --quiet
     tar xzf /tmp/appserver-artifact.tar.gz -C /tmp/
 
     # Update traefik config and restart
