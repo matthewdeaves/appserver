@@ -81,6 +81,17 @@ variable "admin_email" {
   }
 }
 
+variable "home_ip" {
+  description = "Home IP address — bypasses Cloudflare Access (no OTP challenge)"
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.home_ip == "" || can(regex("^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$", var.home_ip))
+    error_message = "Must be a valid IPv4 address or empty string."
+  }
+}
+
 variable "monthly_budget" {
   description = "Monthly AWS budget in USD"
   type        = number

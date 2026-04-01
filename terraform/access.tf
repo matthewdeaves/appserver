@@ -15,18 +15,30 @@ resource "cloudflare_zero_trust_access_application" "appserver" {
   app_launcher_visible = false
 
   # Cover all app subdomains under a single Access application
+  # TODO: Replace with destinations block when cloudflare provider supports it
   self_hosted_domains = [for s in var.app_subdomains : "${s}.${var.domain}"]
 
-  policies = [
-    {
-      name     = "Allow CLI service token"
-      decision = "non_identity"
-      include  = [{ any_valid_service_token = {} }]
-    },
-    {
-      name     = "Allow admin email (browser OTP)"
-      decision = "allow"
-      include  = [{ email = { email = var.admin_email } }]
-    }
-  ]
+  policies = concat(
+    [
+      {
+        name     = "Allow CLI service token"
+        decision = "non_identity"
+        include  = [{ any_valid_service_token = {} }]
+      },
+    ],
+    var.home_ip != "" ? [
+      {
+        name     = "Bypass from home IP"
+        decision = "bypass"
+        include  = [{ ip = { ip = "${var.home_ip}/32" } }]
+      },
+    ] : [],
+    [
+      {
+        name     = "Allow admin email (browser OTP)"
+        decision = "allow"
+        include  = [{ email = { email = var.admin_email } }]
+      }
+    ]
+  )
 }

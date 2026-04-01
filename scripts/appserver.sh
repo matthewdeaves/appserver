@@ -555,6 +555,7 @@ cmd_deploy() {
     -backend-config="bucket=$bucket" \
     -backend-config="region=$region" \
     -backend-config="use_lockfile=true" \
+    -reconfigure \
     -input=false 2>&1 | mask_account_ids
 
   terraform apply -input=false -auto-approve 2>&1 | mask_account_ids
@@ -588,6 +589,7 @@ cmd_destroy() {
       -backend-config="bucket=$bucket" \
       -backend-config="region=$region" \
       -backend-config="use_lockfile=true" \
+      -reconfigure \
       -input=false 2>&1 | mask_account_ids
 
     terraform destroy -input=false -auto-approve 2>&1 | mask_account_ids
