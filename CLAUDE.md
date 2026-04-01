@@ -27,6 +27,13 @@ terraform/terraform.tfvars.example    # Example tfvars
 terraform/.env.example               # Example .env (Cloudflare API token)
 config/traefik/         # Traefik reverse proxy config + compose
 config/apps/            # Per-app Docker Compose files + env examples
+pentest/                # Penetration testing toolkit (invoke via /pentest skill)
+pentest/pentest.sh      # Pentest CLI (run, list, modules, report)
+pentest/install.sh      # Tool installer (nmap, ffuf, nuclei, testssl, wordlists)
+pentest/scripts/        # Test modules (api, auth, headers, infra, ssrf, webauthn, etc.)
+pentest/targets/        # Target configs with endpoint inventory + known vulns
+pentest/tools/          # Wordlists (testssl cloned at runtime via install.sh)
+pentest/reports/        # Scan results (gitignored)
 scripts/appserver.sh    # Admin CLI (init, deploy, status, app management)
 scripts/bootstrap.sh    # EC2 user_data (Docker, Traefik, cloudflared)
 .github/workflows/      # CI — terraform fmt, validate, shellcheck, gitleaks
@@ -146,3 +153,25 @@ shellcheck scripts/*.sh                             # Shell script linting
 - Cookie v1.13.0+ has built-in cron jobs: `cleanup_device_codes` (hourly), `cleanup_sessions` (daily 3:15 AM), `cleanup_search_images` (daily 3:30 AM)
 - `cookie_admin status --json` includes `maintenance` block with last-run timestamps for each cron job and `device_codes` counts (pending/stale)
 - Cron output is redirected to container stdout (`/proc/1/fd/1`) so it appears in `docker logs`
+
+## Penetration Testing
+
+The `pentest/` directory contains a bash-based security testing toolkit. Invoke via the `/pentest` skill.
+
+```bash
+./pentest/pentest.sh run cookie              # Full app-layer scan
+./pentest/pentest.sh run appserver           # Full infra-layer scan
+./pentest/pentest.sh run cookie --module ssrf # Single module
+./pentest/pentest.sh modules                 # List all modules
+./pentest/pentest.sh report cookie           # Show latest report
+```
+
+### Important Notes
+
+- Tests hit the live production site through Cloudflare — allowlist your IP in CF WAF before scanning
+- Run `pentest/install.sh` once to install tools (nmap, ffuf, nuclei, testssl.sh, wordlists)
+- Target configs (`pentest/targets/*.yaml`) document all known endpoints, rate limits, and vulnerabilities
+- Reports are gitignored — findings stay local
+- 13 modules: recon, headers, tls, paths, nikto, nuclei, api, auth, injection, ssrf, infra, legacy, webauthn
+- Default rate: 5 req/s. Use `--rate 2` for auth endpoints to avoid Cloudflare WAF blocks
+- The `appserver` target auto-skips app-layer modules; use the `cookie` target for app testing
