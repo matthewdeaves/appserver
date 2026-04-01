@@ -55,9 +55,9 @@ Symptom-to-cause mappings for Cookie app issues. For infrastructure-level issues
 
 **Symptoms:** Passkey mode shows home mode UI, or features don't work as expected
 
-**Cause:** Internal nginx overwriting `X-Forwarded-Proto` with `$scheme` (http). Django's `SECURE_SSL_REDIRECT` then 301-redirects API calls.
+**Cause:** Django's `SECURE_SSL_REDIRECT` was `true` while running behind a multi-layer proxy (Cloudflare → Tunnel → Traefik → nginx). Internal nginx overwrites `X-Forwarded-Proto` with `$scheme` (http), causing Django to 301-redirect all API calls.
 **Check:** `docker exec cookie-web curl -sv http://localhost/api/system/health/ 2>&1 | grep Location` — if it redirects to https, the header is wrong.
-**Fix:** App-level nginx config fix, or set `SECURE_SSL_REDIRECT=false` in .env.
+**Fix:** Cookie v1.22.1+ defaults `SECURE_SSL_REDIRECT=false` since Cloudflare handles HTTPS at the edge. If running an older version, set `SECURE_SSL_REDIRECT=false` in .env.
 
 ## Slow AI Features
 

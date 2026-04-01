@@ -91,6 +91,22 @@ docker exec cookie-web python manage.py cookie_admin deactivate USERNAME --json
 docker exec cookie-web python manage.py cookie_admin activate USERNAME --json
 ```
 
+### AI Quota Management
+
+```bash
+# Grant unlimited AI usage
+docker exec cookie-web python manage.py cookie_admin set-unlimited USERNAME --json
+
+# Revoke unlimited AI usage
+docker exec cookie-web python manage.py cookie_admin remove-unlimited USERNAME --json
+
+# View AI usage stats (all users or specific user)
+docker exec cookie-web python manage.py cookie_admin usage --json
+docker exec cookie-web python manage.py cookie_admin usage --username USERNAME --json
+```
+
+Per-feature daily usage tracked for: remix, remix_suggestions, scale, tips, discover, timer.
+
 ## Cleanup Commands
 
 ### cleanup_device_codes
@@ -143,7 +159,7 @@ Shows all migrations. `[X]` = applied, `[ ]` = pending. Pending migrations run a
 docker exec cookie-web pgrep -a cron
 
 # Check crontab
-docker exec cookie-web cat /etc/cron.d/cookie-cron
+docker exec cookie-web cat /etc/cron.d/cookie-cleanup
 
 # Check recent cron output in logs
 docker logs cookie-web --since 2h 2>&1 | grep -i cleanup

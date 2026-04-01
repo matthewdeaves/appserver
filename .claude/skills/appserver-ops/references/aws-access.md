@@ -116,7 +116,7 @@ The deployer profile can perform these security checks without escalation:
 | Snapshot policy | `dlm get-lifecycle-policies` | State: ENABLED |
 | Instance role policies | Requires admin — use `iam list-role-policies` | s3-artifacts, ssm-parameters + SSM Core |
 | Cookie security | SSM: `manage.py check --deploy` | 0 issues |
-| Cookie audit trail | SSM: `cookie_admin audit --json` | No unexpected registrations |
+| Cookie audit trail | SSM: `python manage.py cookie_admin audit --json` | No unexpected registrations |
 | Cost anomalies | `ce get-cost-and-usage` (us-east-1) | Within budget |
 
 **Cannot do with deployer (requires admin):**

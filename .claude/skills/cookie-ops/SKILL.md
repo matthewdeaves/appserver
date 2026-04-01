@@ -48,12 +48,10 @@ Input can be:
 
 1. Verify the image exists on GHCR (CD workflow must be complete)
 2. Update version in `config/apps/cookie/docker-compose.yml` (image tag default + `COOKIE_VERSION` env default)
-3. Update version in `config/apps/cookie/.env.example` (for documentation)
-4. Update version reference in `CLAUDE.md`
-5. `./scripts/appserver.sh config push` then `./scripts/appserver.sh app deploy cookie`
-6. **Watch for crash loops** — check container status within 30 seconds
-7. If crash-looping, roll back: revert compose file, `config push`, `app deploy`
-8. Run `cookie_admin status --json` to verify health post-deploy
+3. `./scripts/appserver.sh config push` then `./scripts/appserver.sh app deploy cookie`
+4. **Watch for crash loops** — check container status within 30 seconds
+5. If crash-looping, roll back: revert compose file, `config push`, `app deploy`
+6. Run `python manage.py cookie_admin status --json` to verify health post-deploy
 
 **Important:** The version is pinned in `docker-compose.yml` only (single source of truth). Do NOT set `COOKIE_VERSION` in the instance `.env` — the compose default is authoritative.
 
@@ -88,6 +86,7 @@ Delegate to the infrastructure skill when the issue is:
 - **Entrypoint errors may be swallowed.** DB wait loops pipe through `2>/dev/null`. If logs just show "Waiting for database..." but DB is healthy, test the check command manually with `docker exec`.
 - **Passkeys need correct RP ID.** `WEBAUTHN_RP_ID` must be `matthewdeaves.com` (parent domain). Check `cookie_admin status --json` → `webauthn.rp_id`.
 - **First user is auto-admin.** The first person to register at `/register` gets promoted to admin automatically.
+- **`SECURE_SSL_REDIRECT` must be false behind proxy.** Cookie v1.22.1+ defaults to `false`. Cloudflare handles HTTPS at the edge; enabling this in Django causes infinite 301 redirect loops.
 
 ## Report Format
 
