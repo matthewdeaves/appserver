@@ -3,7 +3,7 @@
 
 resource "aws_s3_bucket" "artifacts" {
   bucket        = "appserver-artifacts-${data.aws_caller_identity.current.account_id}-${var.region}"
-  force_destroy = true
+  force_destroy = var.force_destroy
 
   tags = merge(local.common_tags, {
     Name = "appserver-artifacts"

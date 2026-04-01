@@ -92,6 +92,12 @@ variable "monthly_budget" {
   }
 }
 
+variable "force_destroy" {
+  description = "Allow S3 buckets to be destroyed with objects (use only for teardown)"
+  type        = bool
+  default     = false
+}
+
 variable "cloudflared_version" {
   description = "Cloudflared version to install (pinned for stability)"
   type        = string

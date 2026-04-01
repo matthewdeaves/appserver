@@ -146,8 +146,11 @@ resource "aws_instance" "appserver" {
     auto_recovery = "default"
   }
 
+  disable_api_termination = true
+
   tags = merge(local.common_tags, {
-    Name = "appserver"
+    Name        = "appserver"
+    Environment = "production"
   })
 
   # user_data only runs on first boot — changes should NOT recreate the instance.

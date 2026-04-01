@@ -849,8 +849,10 @@ cmd_app_init() {
     while IFS= read -r line; do
       [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
       local key="${line%%=*}"
-      # Remove existing key then append
-      env_content=$(echo "$env_content" | grep -v "^${key}=")
+      # Remove existing key then append (escape key for grep literal match)
+      local escaped_key
+      escaped_key=$(printf '%s' "$key" | sed 's/[.[\\*^$/]/\\&/g')
+      env_content=$(echo "$env_content" | grep -v "^${escaped_key}=")
       env_content="$env_content"$'\n'"$line"
     done < "$secrets_file"
     # Clean up any blank lines
@@ -968,7 +970,8 @@ cmd_app_env() {
       cp /opt/appserver/apps/$app/.env /tmp/appserver-env-new
       # Remove existing keys so we upsert rather than duplicate
       for key in \$(echo '$keys_b64' | base64 -d); do
-        sed -i \"/^\${key}=/d\" /tmp/appserver-env-new
+        escaped_key=\$(printf '%s' \"\$key\" | sed 's/[.[\\\\*^$/]/\\\\&/g')
+        sed -i \"/^\${escaped_key}=/d\" /tmp/appserver-env-new
       done
       echo '$env_content' | base64 -d >> /tmp/appserver-env-new
       mv /tmp/appserver-env-new /opt/appserver/apps/$app/.env

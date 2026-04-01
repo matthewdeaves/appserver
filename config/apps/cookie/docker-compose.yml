@@ -20,6 +20,13 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+        reservations:
+          memory: 256M
 
   web:
     image: ghcr.io/matthewdeaves/cookie:${COOKIE_VERSION:-1.21.1}
@@ -51,6 +58,13 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 512M
+        reservations:
+          memory: 256M
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.cookie.rule=Host(`cookie.matthewdeaves.com`)"

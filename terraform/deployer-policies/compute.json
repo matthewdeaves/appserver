@@ -101,7 +101,12 @@
         "dlm:DeleteLifecyclePolicy",
         "dlm:GetLifecyclePolicies"
       ],
-      "Resource": "*"
+      "Resource": "arn:aws:dlm:*:*:policy/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/Project": "appserver"
+        }
+      }
     }
   ]
 }
