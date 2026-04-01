@@ -18,7 +18,7 @@ Symptom-to-cause mappings for Cookie app issues. For infrastructure-level issues
 **Check in order (each step can fail independently):**
 
 1. **Page loads but button does nothing** — JavaScript not executing on old browsers (Safari 9/10 on iOS 9-10). Fixed in v1.12.0 with ES5-compatible legacy JS.
-2. **POST to create code fails** — Check `docker logs cookie-web-1 --since 10m 2>&1 | grep 'device/code'` for non-201 responses.
+2. **POST to create code fails** — Check `docker logs cookie-web --since 10m 2>&1 | grep 'device/code'` for non-201 responses.
 3. **Poll returns 500** — Two known bugs (both fixed):
    - `FeatureNotSupported: FOR UPDATE cannot be applied to nullable outer join` (fixed v1.12.1)
    - `MultipleObjectsReturned` from stale codes accumulating (fixed v1.13.0)
@@ -35,7 +35,7 @@ Symptom-to-cause mappings for Cookie app issues. For infrastructure-level issues
 1. **Image not ready** — CD workflow hasn't finished building. Check Cookie repo Actions tab.
 2. **Cron daemon bug** — Entrypoint uses `cron &` instead of `cron -f &`, causing `wait -n` to trigger shutdown (fixed in v1.13.0 re-release).
 3. **New env vars required** — Check release notes for new required configuration.
-4. **Migration failure** — Check `docker logs cookie-web-1 --tail 50` for migration errors.
+4. **Migration failure** — Check `docker logs cookie-web --tail 50` for migration errors.
 
 **Immediate fix:** Roll back: revert version in `docker-compose.yml`, `config push`, then `app deploy cookie`
 **Key lesson:** Always check container status within 30 seconds of deploying a new version.
@@ -45,8 +45,8 @@ Symptom-to-cause mappings for Cookie app issues. For infrastructure-level issues
 **Symptoms:** `maintenance.*.last_run` shows "never" in `cookie_admin status --json` for longer than the job's schedule
 
 **Causes:**
-1. Cron daemon not running — check `docker exec cookie-web-1 pgrep -a cron`
-2. Crontab missing — check `docker exec cookie-web-1 cat /etc/cron.d/cookie-cron`
+1. Cron daemon not running — check `docker exec cookie-web pgrep -a cron`
+2. Crontab missing — check `docker exec cookie-web cat /etc/cron.d/cookie-cron`
 3. Container restarted recently — cron jobs haven't hit their next schedule yet (normal after deploy)
 
 **Fix:** If cron process is missing, this is a Cookie image bug (entrypoint issue). Roll back to a known-good version.
@@ -56,7 +56,7 @@ Symptom-to-cause mappings for Cookie app issues. For infrastructure-level issues
 **Symptoms:** Passkey mode shows home mode UI, or features don't work as expected
 
 **Cause:** Internal nginx overwriting `X-Forwarded-Proto` with `$scheme` (http). Django's `SECURE_SSL_REDIRECT` then 301-redirects API calls.
-**Check:** `docker exec cookie-web-1 curl -sv http://localhost/api/system/health/ 2>&1 | grep Location` — if it redirects to https, the header is wrong.
+**Check:** `docker exec cookie-web curl -sv http://localhost/api/system/health/ 2>&1 | grep Location` — if it redirects to https, the header is wrong.
 **Fix:** App-level nginx config fix, or set `SECURE_SSL_REDIRECT=false` in .env.
 
 ## Slow AI Features
@@ -85,4 +85,4 @@ Symptom-to-cause mappings for Cookie app issues. For infrastructure-level issues
 
 **Symptoms:** "Waiting for database..." in logs but cookie-db is healthy
 **Cause:** Entrypoint DB wait check failing for non-DB reasons (missing env var, import error). The error is swallowed by `2>/dev/null`.
-**Check:** `docker exec cookie-web-1 python -c "import django; django.setup()"` to see the actual error.
+**Check:** `docker exec cookie-web python -c "import django; django.setup()"` to see the actual error.

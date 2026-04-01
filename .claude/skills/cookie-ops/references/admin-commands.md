@@ -1,6 +1,6 @@
 # Cookie Admin Commands
 
-All commands run inside the `cookie-web-1` container via SSM. Use `AWS_PROFILE=appserver`.
+All commands run inside the `cookie-web` container via SSM. Use `AWS_PROFILE=appserver`.
 
 ## SSM Pattern
 
@@ -11,7 +11,7 @@ INSTANCE_ID=$(cd $PROJECT_ROOT/terraform && terraform output -raw instance_id 2>
 COMMAND_ID=$(aws ssm send-command \
   --instance-ids "$INSTANCE_ID" \
   --document-name "AWS-RunShellScript" \
-  --parameters '{"commands":["docker exec cookie-web-1 python manage.py COMMAND"]}' \
+  --parameters '{"commands":["docker exec cookie-web python manage.py COMMAND"]}' \
   --query 'Command.CommandId' --output text --region "$REGION")
 
 sleep 3
@@ -30,7 +30,7 @@ All support `--json` for structured output. Always use `--json` when running via
 ### status
 
 ```bash
-docker exec cookie-web-1 python manage.py cookie_admin status --json
+docker exec cookie-web python manage.py cookie_admin status --json
 ```
 
 Returns:
@@ -58,7 +58,7 @@ Returns:
 ### audit
 
 ```bash
-docker exec cookie-web-1 python manage.py cookie_admin audit --json
+docker exec cookie-web python manage.py cookie_admin audit --json
 # Optional: --lines N (default 50)
 ```
 
@@ -69,7 +69,7 @@ Each event includes timestamp, type, username/credential ID, and relevant metada
 ### list-users
 
 ```bash
-docker exec cookie-web-1 python manage.py cookie_admin list-users --json
+docker exec cookie-web python manage.py cookie_admin list-users --json
 # Optional: --active-only, --admins-only
 ```
 
@@ -79,16 +79,16 @@ Returns all user accounts with activity status.
 
 ```bash
 # Promote to admin
-docker exec cookie-web-1 python manage.py cookie_admin promote USERNAME --json
+docker exec cookie-web python manage.py cookie_admin promote USERNAME --json
 
 # Demote from admin
-docker exec cookie-web-1 python manage.py cookie_admin demote USERNAME --json
+docker exec cookie-web python manage.py cookie_admin demote USERNAME --json
 
 # Deactivate account
-docker exec cookie-web-1 python manage.py cookie_admin deactivate USERNAME --json
+docker exec cookie-web python manage.py cookie_admin deactivate USERNAME --json
 
 # Reactivate account
-docker exec cookie-web-1 python manage.py cookie_admin activate USERNAME --json
+docker exec cookie-web python manage.py cookie_admin activate USERNAME --json
 ```
 
 ## Cleanup Commands
@@ -96,7 +96,7 @@ docker exec cookie-web-1 python manage.py cookie_admin activate USERNAME --json
 ### cleanup_device_codes
 
 ```bash
-docker exec cookie-web-1 python manage.py cleanup_device_codes --dry-run
+docker exec cookie-web python manage.py cleanup_device_codes --dry-run
 ```
 
 Purges expired/invalidated device pairing codes. Runs hourly via cron. Remove `--dry-run` to execute.
@@ -104,7 +104,7 @@ Purges expired/invalidated device pairing codes. Runs hourly via cron. Remove `-
 ### cleanup_sessions
 
 ```bash
-docker exec cookie-web-1 python manage.py cleanup_sessions --dry-run
+docker exec cookie-web python manage.py cleanup_sessions --dry-run
 ```
 
 Cleans up expired Django sessions. Runs daily at 3:15 AM UTC via cron.
@@ -112,7 +112,7 @@ Cleans up expired Django sessions. Runs daily at 3:15 AM UTC via cron.
 ### cleanup_search_images
 
 ```bash
-docker exec cookie-web-1 python manage.py cleanup_search_images --dry-run
+docker exec cookie-web python manage.py cleanup_search_images --dry-run
 # Optional: --days N (default 30)
 ```
 
@@ -123,7 +123,7 @@ Removes cached recipe search images not accessed in N days. Runs daily at 3:30 A
 ### Security check
 
 ```bash
-docker exec cookie-web-1 python manage.py check --deploy
+docker exec cookie-web python manage.py check --deploy
 ```
 
 Runs Django's production security checklist (HSTS, CSRF, session security). Read-only, safe for production.
@@ -131,7 +131,7 @@ Runs Django's production security checklist (HSTS, CSRF, session security). Read
 ### Migration status
 
 ```bash
-docker exec cookie-web-1 python manage.py showmigrations
+docker exec cookie-web python manage.py showmigrations
 ```
 
 Shows all migrations. `[X]` = applied, `[ ]` = pending. Pending migrations run automatically on container start.
@@ -140,13 +140,13 @@ Shows all migrations. `[X]` = applied, `[ ]` = pending. Pending migrations run a
 
 ```bash
 # Check if cron daemon is running
-docker exec cookie-web-1 pgrep -a cron
+docker exec cookie-web pgrep -a cron
 
 # Check crontab
-docker exec cookie-web-1 cat /etc/cron.d/cookie-cron
+docker exec cookie-web cat /etc/cron.d/cookie-cron
 
 # Check recent cron output in logs
-docker logs cookie-web-1 --since 2h 2>&1 | grep -i cleanup
+docker logs cookie-web --since 2h 2>&1 | grep -i cleanup
 ```
 
 Three cron jobs configured:
@@ -162,8 +162,8 @@ All output redirects to `/proc/1/fd/1` (container stdout) so it appears in `dock
 
 ```bash
 # 4xx/5xx errors
-docker exec cookie-web-1 awk '$9 >= 400' /var/log/nginx/access.log | tail -20
+docker exec cookie-web awk '$9 >= 400' /var/log/nginx/access.log | tail -20
 
 # Error log
-docker exec cookie-web-1 cat /var/log/nginx/error.log | tail -20
+docker exec cookie-web cat /var/log/nginx/error.log | tail -20
 ```

@@ -45,7 +45,7 @@ services:
       - WEBAUTHN_RP_NAME=${WEBAUTHN_RP_NAME:-Cookie}
       - SITE_URL=${SITE_URL:-https://cookie.matthewdeaves.com}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
-      - SECURE_SSL_REDIRECT=${SECURE_SSL_REDIRECT:-true}
+      - SECURE_SSL_REDIRECT=${SECURE_SSL_REDIRECT:-false}
       - COOKIE_VERSION=${COOKIE_VERSION:-1.22.0}
       - LOG_FORMAT=${LOG_FORMAT:-json}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}

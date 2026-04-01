@@ -29,11 +29,11 @@ Input can be:
 | Task | Command |
 |------|---------|
 | Deploy new version | Update version in `docker-compose.yml`, `config push`, `app deploy cookie` |
-| Check status | `cookie_admin status --json` via SSM |
+| Check status | `python manage.py cookie_admin status --json` via SSM |
 | View logs | `./scripts/appserver.sh logs cookie` |
-| Security audit | `cookie_admin audit --json` via SSM |
-| List users | `cookie_admin list-users --json` via SSM |
-| Run cleanup | `cleanup_device_codes` / `cleanup_sessions` / `cleanup_search_images` via SSM |
+| Security audit | `python manage.py cookie_admin audit --json` via SSM |
+| List users | `python manage.py cookie_admin list-users --json` via SSM |
+| Run cleanup | `python manage.py cleanup_device_codes` / `cleanup_sessions` / `cleanup_search_images` via SSM |
 
 ## Workflow
 
@@ -66,7 +66,7 @@ Use `cookie_admin` subcommands via SSM — see [admin-commands.md](references/ad
 - All SSM commands use `AWS_PROFILE=appserver` (deployer profile)
 - Always use `--json` flag with `cookie_admin` subcommands for structured output
 - Scope log queries: `--since 10m` or `--tail 50` to avoid noise
-- Cookie containers: `cookie-web-1` (app), `cookie-db` (postgres)
+- Cookie containers: `cookie-web` (app), `cookie-db` (postgres)
 - App secrets live at `/opt/appserver/apps/cookie/.env` on the instance — use `app env` CLI
 
 ## When to Escalate to /appserver-ops
@@ -84,7 +84,7 @@ Delegate to the infrastructure skill when the issue is:
 - **Watch for crash loops after upgrades.** If cookie-web restarts repeatedly with exit code 0 and no errors, suspect entrypoint process supervision bugs. Roll back immediately.
 - **Cron logs appear in `docker logs`.** All three cron jobs redirect to `/proc/1/fd/1`. Check with: `docker logs cookie-web-1 --since 2h 2>&1 | grep -i cleanup`
 - **Device code issues have layers.** Check in order: JS executing on client (old browsers?), POST creating code (201?), poll returning status (500?), authorization succeeding (200?). Each step can fail independently.
-- **`cookie_admin status --json` is the single best diagnostic.** It covers DB, migrations, auth config, user counts, device code state, cron job health, and AI config in one call.
+- **`python manage.py cookie_admin status --json` is the single best diagnostic.** It covers DB, migrations, auth config, user counts, device code state, cron job health, and AI config in one call.
 - **Entrypoint errors may be swallowed.** DB wait loops pipe through `2>/dev/null`. If logs just show "Waiting for database..." but DB is healthy, test the check command manually with `docker exec`.
 - **Passkeys need correct RP ID.** `WEBAUTHN_RP_ID` must be `matthewdeaves.com` (parent domain). Check `cookie_admin status --json` → `webauthn.rp_id`.
 - **First user is auto-admin.** The first person to register at `/register` gets promoted to admin automatically.
