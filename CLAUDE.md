@@ -152,7 +152,6 @@ shellcheck scripts/*.sh                             # Shell script linting
 - Device code flow allows legacy devices without WebAuthn support to pair via 6-char codes
 - Cookie v1.13.0+ has built-in cron jobs: `cleanup_device_codes` (hourly), `cleanup_sessions` (daily 3:15 AM), `cleanup_search_images` (daily 3:30 AM)
 - `python manage.py cookie_admin status --json` includes `maintenance` block with last-run timestamps for each cron job and `device_codes` counts (pending/stale)
-- As of v1.22.0, `cookie_admin` is a Django management command — run via `python manage.py cookie_admin`, not as a standalone binary
 - Cron output is redirected to container stdout (`/proc/1/fd/1`) so it appears in `docker logs`
 
 ## Penetration Testing
