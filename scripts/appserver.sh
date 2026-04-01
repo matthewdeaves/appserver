@@ -889,7 +889,110 @@ cmd_app_init() {
   echo "  3. Register your first passkey (first user becomes admin)"
 }
 
+# Check Cloudflare IP ranges against traefik.yml trustedIPs.
+# Missing ranges = Traefik silently strips X-Forwarded-For from those edge nodes,
+# so Django sees Traefik's IP instead of the client. Rate limiting, logging, and
+# IP-based security all break with no error signal.
+# Returns: 0 = in sync, 1 = drift detected, 2 = fetch failed
+check_cloudflare_ip_drift() {
+  local traefik_yml="$CONFIG_DIR/traefik/traefik.yml"
+  [ -f "$traefik_yml" ] || return 2
+
+  local live_v4 live_v6 live configured
+  live_v4=$(curl -sf --max-time 10 "https://www.cloudflare.com/ips-v4" 2>/dev/null) || return 2
+  live_v6=$(curl -sf --max-time 10 "https://www.cloudflare.com/ips-v6" 2>/dev/null) || return 2
+  live=$(printf '%s\n%s' "$live_v4" "$live_v6" | grep -v '^$' | sort)
+
+  configured=$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+|[0-9a-f:]+/[0-9]+' "$traefik_yml" \
+      | grep -v '^127\.' | grep -v '^172\.16\.' | sort)
+
+  CF_IP_MISSING=$(comm -23 <(echo "$live") <(echo "$configured"))
+  CF_IP_EXTRA=$(comm -13 <(echo "$live") <(echo "$configured"))
+  CF_IP_LIVE="$live"
+
+  if [ -z "$CF_IP_MISSING" ] && [ -z "$CF_IP_EXTRA" ]; then
+    return 0
+  fi
+  return 1
+}
+
+# Rewrite the trustedIPs block in traefik.yml with current Cloudflare ranges.
+sync_cloudflare_ips() {
+  local traefik_yml="$CONFIG_DIR/traefik/traefik.yml"
+  local indent="        "
+  local new_block=""
+  new_block+="${indent}# Local: cloudflared systemd service connects via localhost/Docker bridge\n"
+  new_block+="${indent}- \"127.0.0.0/8\"\n"
+  new_block+="${indent}- \"172.16.0.0/12\"\n"
+  new_block+="${indent}# Cloudflare public IP ranges (synced $(date +%Y-%m-%d))\n"
+  new_block+="${indent}# https://www.cloudflare.com/ips-v4 / ips-v6\n"
+  new_block+="${indent}# Audit: ./scripts/appserver.sh config check-ips\n"
+  while IFS= read -r cidr; do
+    [ -n "$cidr" ] && new_block+="${indent}- \"$cidr\"\n"
+  done <<< "$CF_IP_LIVE"
+
+  awk -v new_ips="$new_block" '
+    /trustedIPs:/ { print; in_block=1; next }
+    in_block && /^[[:space:]]*-/ { next }
+    in_block && !/^[[:space:]]*-/ && !/^[[:space:]]*#/ { printf "%s", new_ips; in_block=0 }
+    in_block && /^[[:space:]]*#/ { next }
+    !in_block { print }
+    END { if (in_block) printf "%s", new_ips }
+  ' "$traefik_yml" > "${traefik_yml}.tmp" && mv "${traefik_yml}.tmp" "$traefik_yml"
+}
+
+cmd_config_check_ips() {
+  echo "Checking Cloudflare IP ranges against traefik.yml..."
+  check_cloudflare_ip_drift
+  local rc=$?
+
+  if [ "$rc" -eq 2 ]; then
+    die "Could not fetch Cloudflare IP ranges (network error or traefik.yml missing)"
+  fi
+
+  if [ "$rc" -eq 0 ]; then
+    echo "Cloudflare IP ranges are up to date."
+    return 0
+  fi
+
+  # Drift detected — explain the impact
+  if [ -n "$CF_IP_MISSING" ]; then
+    echo "WARNING: New Cloudflare ranges missing from traefik.yml"
+    echo "  Impact: Traefik strips X-Forwarded-For from these edge nodes."
+    echo "  Result: Django sees wrong client IP — rate limiting and logging break silently."
+    echo "$CF_IP_MISSING" | while read -r cidr; do echo "  + $cidr"; done
+  fi
+  if [ -n "$CF_IP_EXTRA" ]; then
+    echo "Stale ranges (removed by Cloudflare):"
+    echo "$CF_IP_EXTRA" | while read -r cidr; do echo "  - $cidr"; done
+  fi
+
+  if [ "${1:-}" = "--fix" ]; then
+    echo ""
+    sync_cloudflare_ips
+    echo "Updated traefik.yml. Run 'appserver config push' to deploy."
+  else
+    echo ""
+    echo "Fix with: ./scripts/appserver.sh config check-ips --fix"
+  fi
+}
+
 cmd_config_push() {
+  # Pre-flight: warn if Cloudflare IP ranges have drifted
+  check_cloudflare_ip_drift
+  local ip_rc=$?
+  if [ "$ip_rc" -eq 1 ]; then
+    echo "WARNING: Cloudflare IP ranges in traefik.yml are out of date."
+    if [ -n "$CF_IP_MISSING" ]; then
+      echo "  Missing ranges — X-Forwarded-For will be silently stripped for some edge nodes."
+      echo "$CF_IP_MISSING" | while read -r cidr; do echo "    + $cidr"; done
+    fi
+    echo "  Run 'appserver config check-ips --fix' first, or proceed at your own risk."
+    echo ""
+    read -rp "Push anyway? [y/N] " confirm
+    [[ "$confirm" =~ ^[Yy]$ ]] || { echo "Aborted."; return 1; }
+  fi
+
   echo "Pushing config to instance..."
   package_and_upload_artifact
 
@@ -1001,7 +1104,8 @@ case "${1:-}" in
   config)
     case "${2:-}" in
       push) cmd_config_push ;;
-      *)    echo "Usage: appserver config push" ;;
+      check-ips) cmd_config_check_ips "${3:-}" ;;
+      *)    echo "Usage: appserver config {push|check-ips [--fix]}" ;;
     esac
     ;;
   app)
@@ -1042,6 +1146,7 @@ case "${1:-}" in
     echo "  app env <name> [KEY=VALUE]   View/set environment variables"
     echo
     echo "Config:"
-    echo "  config push   Upload config to instance and restart Traefik"
+    echo "  config push              Upload config to instance and restart Traefik"
+    echo "  config check-ips [--fix] Audit Cloudflare IP ranges in traefik.yml"
     ;;
 esac

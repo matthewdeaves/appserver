@@ -60,7 +60,9 @@ README.md               # Project overview
 ./scripts/appserver.sh app remove <name>   # Stop + remove app
 ./scripts/appserver.sh app restart <name>  # Restart app containers
 ./scripts/appserver.sh app env <name>      # View/set env vars
-./scripts/appserver.sh config push         # Push config + restart Traefik
+./scripts/appserver.sh config push              # Push config + restart Traefik
+./scripts/appserver.sh config check-ips        # Audit Cloudflare IP ranges in traefik.yml
+./scripts/appserver.sh config check-ips --fix  # Auto-sync stale ranges
 ```
 
 ## Deploying Cookie (First Time)
@@ -140,6 +142,7 @@ shellcheck scripts/*.sh                             # Shell script linting
 - Cookie publishes multi-arch images (amd64 + arm64) via CD workflow on semantic version tags
 - Traefik is pinned to v3.4.0 with health check via `traefik healthcheck --ping`
 - Traefik forwards Cloudflare headers (CF-Connecting-IP, X-Forwarded-For) via `forwardedHeaders.trustedIPs` (Cloudflare IP ranges only)
+- Cloudflare IP ranges in traefik.yml can drift — run `config check-ips` periodically to audit, `--fix` to auto-sync
 - App names must be lowercase alphanumeric with hyphens — validated by the CLI
 - SSM commands use `jq` for safe JSON encoding (no string interpolation injection)
 - `app env` masks values when displaying (shows KEY=***) and validates KEY=VALUE format
