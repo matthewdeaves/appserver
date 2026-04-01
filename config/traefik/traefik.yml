@@ -5,6 +5,10 @@ entryPoints:
       # Only trust forwarded headers from Cloudflare IP ranges
       # https://www.cloudflare.com/ips-v4 / ips-v6
       trustedIPs:
+        # Local: cloudflared systemd service connects via localhost/Docker bridge
+        - "127.0.0.0/8"
+        - "172.16.0.0/12"
+        # Cloudflare public IP ranges
         - "173.245.48.0/20"
         - "103.21.244.0/22"
         - "103.22.200.0/22"
