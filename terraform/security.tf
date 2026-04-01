@@ -30,7 +30,7 @@ resource "cloudflare_ruleset" "rate_limiting" {
 resource "cloudflare_zone_setting" "browser_check" {
   zone_id    = var.cloudflare_zone_id
   setting_id = "browser_check"
-  value      = "on"
+  value      = "off" # PENTEST: temporarily disabled — re-enable after scan
 }
 
 resource "cloudflare_zone_setting" "min_tls_version" {
