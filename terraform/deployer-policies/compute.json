@@ -92,10 +92,23 @@
       "Resource": "arn:aws:ec2:*:*:vpc/*"
     },
     {
-      "Sid": "DLM",
+      "Sid": "DLMCreate",
       "Effect": "Allow",
       "Action": [
         "dlm:CreateLifecyclePolicy",
+        "dlm:TagResource"
+      ],
+      "Resource": "arn:aws:dlm:*:*:policy/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/Project": "appserver"
+        }
+      }
+    },
+    {
+      "Sid": "DLMMutate",
+      "Effect": "Allow",
+      "Action": [
         "dlm:GetLifecyclePolicy",
         "dlm:UpdateLifecyclePolicy",
         "dlm:DeleteLifecyclePolicy",
@@ -107,6 +120,12 @@
           "aws:ResourceTag/Project": "appserver"
         }
       }
+    },
+    {
+      "Sid": "DLMList",
+      "Effect": "Allow",
+      "Action": "dlm:GetLifecyclePolicies",
+      "Resource": "*"
     }
   ]
 }

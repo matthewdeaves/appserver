@@ -33,7 +33,7 @@ resource "cloudflare_dns_record" "app" {
   for_each = toset(var.app_subdomains)
 
   zone_id = var.cloudflare_zone_id
-  name    = each.value
+  name    = "${each.value}.${var.domain}"
   type    = "CNAME"
   content = "${cloudflare_zero_trust_tunnel_cloudflared.appserver.id}.cfargotunnel.com"
   proxied = true

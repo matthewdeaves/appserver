@@ -2,6 +2,7 @@ resource "aws_dlm_lifecycle_policy" "appserver_snapshots" {
   description        = "Daily EBS snapshots for appserver instance"
   execution_role_arn = aws_iam_role.dlm.arn
   state              = "ENABLED"
+  tags               = local.common_tags
 
   policy_details {
     resource_types = ["INSTANCE"]
