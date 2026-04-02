@@ -176,5 +176,5 @@ The `pentest/` directory contains a bash-based security testing toolkit. Invoke 
 - Target configs (`pentest/targets/*.yaml`) document all known endpoints, rate limits, and vulnerabilities
 - Reports are gitignored — findings stay local
 - 13 modules: recon, headers, tls, paths, nikto, nuclei, api, auth, injection, ssrf, infra, legacy, webauthn
-- Default rate: 5 req/s. Use `--rate 2` for auth endpoints to avoid Cloudflare WAF blocks
+- Default rate: 50 req/s. Auth endpoints (`/api/auth/`) automatically use 2 req/s to stay under Cloudflare WAF rate limits (20 req/10s)
 - The `appserver` target auto-skips app-layer modules; use the `cookie` target for app testing
