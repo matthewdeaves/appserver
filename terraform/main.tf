@@ -153,9 +153,10 @@ resource "aws_instance" "appserver" {
     Environment = "production"
   })
 
-  # user_data only runs on first boot — changes should NOT recreate the instance.
-  # Use 'appserver config push' or 'appserver ssh' for runtime updates.
+  # ami and user_data only matter at first boot — changes should NOT recreate the instance.
+  # AMI updates: AL2023 patches via dnf at runtime; new AMI only used if instance is rebuilt from scratch.
+  # user_data updates: use 'appserver config push' or 'appserver ssh' for runtime changes.
   lifecycle {
-    ignore_changes = [user_data_base64]
+    ignore_changes = [ami, user_data_base64]
   }
 }
