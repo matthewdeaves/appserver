@@ -48,7 +48,9 @@ scripts/bootstrap.sh    # EC2 user_data (Docker, Traefik, cloudflared)
 ./scripts/appserver.sh app init cookie     # Auto-generate all secrets
 ./scripts/appserver.sh app deploy cookie   # Pull image + start
 # Visit https://cookie.matthewdeaves.com
-# Register your first passkey — first user becomes admin
+# Register your first passkey, then promote to admin:
+# docker exec cookie-web python manage.py cookie_admin list-users --json
+# docker exec cookie-web python manage.py cookie_admin promote <username> --json
 ```
 
 `app init` auto-generates cryptographically random values for:
@@ -123,6 +125,7 @@ shellcheck scripts/*.sh                             # Shell script linting
 - SSM commands use `jq` for safe JSON encoding (no string interpolation injection)
 - `app env` masks values when displaying (shows KEY=***) and validates KEY=VALUE format
 - Bootstrap retries tunnel token fetch 5 times with 10s backoff
+- Django `createsuperuser` is blocked — use `cookie_admin promote` instead
 - Device code flow allows legacy devices without WebAuthn support to pair via 6-char codes
 - Cookie v1.13.0+ has built-in cron jobs: `cleanup_device_codes` (hourly), `cleanup_sessions` (daily 3:15 AM), `cleanup_search_images` (daily 3:30 AM)
 - `python manage.py cookie_admin status --json` includes `maintenance` block with last-run timestamps for each cron job and `device_codes` counts (pending/stale)

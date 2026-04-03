@@ -85,7 +85,7 @@ Delegate to the infrastructure skill when the issue is:
 - **`python manage.py cookie_admin status --json` is the single best diagnostic.** It covers DB, migrations, auth config, user counts, device code state, cron job health, and AI config in one call.
 - **Entrypoint errors may be swallowed.** DB wait loops pipe through `2>/dev/null`. If logs just show "Waiting for database..." but DB is healthy, test the check command manually with `docker exec`.
 - **Passkeys need correct RP ID.** `WEBAUTHN_RP_ID` must be `matthewdeaves.com` (parent domain). Check `cookie_admin status --json` → `webauthn.rp_id`.
-- **First user is auto-admin.** The first person to register at `/register` gets promoted to admin automatically.
+- **No auto-admin.** All users register as non-admin. Promote the first user via CLI: `cookie_admin promote <username>`.
 - **`SECURE_SSL_REDIRECT` must be false behind proxy.** Cookie v1.22.1+ defaults to `false`. Cloudflare handles HTTPS at the edge; enabling this in Django causes infinite 301 redirect loops.
 
 ## Report Format

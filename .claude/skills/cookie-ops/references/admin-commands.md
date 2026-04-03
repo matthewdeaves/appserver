@@ -23,6 +23,19 @@ aws ssm get-command-invocation \
   --output json --region "$REGION"
 ```
 
+## First-Time Setup (New Deployment)
+
+After the first user registers via passkey, they have no admin privileges.
+Promote them via SSM:
+
+```bash
+docker exec cookie-web python manage.py cookie_admin list-users --json
+# Find the username (pk_XXXXXXXX format)
+docker exec cookie-web python manage.py cookie_admin promote pk_XXXXXXXX --json
+```
+
+This is the ONLY way to grant admin access. There is no auto-promotion.
+
 ## cookie_admin Subcommands
 
 All support `--json` for structured output. Always use `--json` when running via SSM.
@@ -106,6 +119,17 @@ docker exec cookie-web python manage.py cookie_admin usage --username USERNAME -
 ```
 
 Per-feature daily usage tracked for: remix, remix_suggestions, scale, tips, discover, timer.
+
+### create-session (pentest/automation)
+
+```bash
+docker exec cookie-web python manage.py cookie_admin create-session USERNAME --json
+# Optional: --ttl N (default 3600 = 1 hour, range 60-86400)
+```
+
+Creates a Django session for the specified user without WebAuthn authentication.
+Returns the session key for use in automated testing (e.g., pentest SSRF tests).
+Session is short-lived (default 1 hour) and logged to the security logger.
 
 ## Cleanup Commands
 
