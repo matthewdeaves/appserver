@@ -10,36 +10,12 @@ Docker app hosting on EC2 behind Cloudflare Tunnel. Each app runs as a Docker Co
 
 ```
 terraform/              # All infrastructure (EC2, IAM, SG, tunnel, access, monitoring, snapshots)
-terraform/main.tf       # EC2 instance (t4g.small ARM), security group, IAM role/policies
-terraform/variables.tf  # Input variables (region, domain, subdomains, email, budget)
-terraform/outputs.tf    # Terraform outputs (instance ID, app URLs, SSM command)
-terraform/providers.tf  # AWS + Cloudflare provider configuration
-terraform/versions.tf   # Required provider versions and S3 backend config
-terraform/tunnel.tf     # Cloudflare Tunnel + per-app subdomain DNS CNAMEs
-terraform/access.tf     # Cloudflare Access (email OTP for browser, service token for CLI)
-terraform/monitoring.tf # Monthly budget alarm, EC2 auto-recovery
-terraform/snapshots.tf  # Daily EBS snapshots (DLM policy, 7-day retention)
-terraform/s3.tf         # Artifacts S3 bucket (deploy config, cloudflared fallback)
-terraform/security.tf   # Cloudflare WAF rate limiting + zone security settings
-terraform/deployer-policies/ # 3 least-privilege IAM policies (compute, iam-ssm, monitoring-storage)
-terraform/appserver-admin-policy.json # Bootstrap IAM policy for admin user
-terraform/terraform.tfvars.example    # Example tfvars
-terraform/.env.example               # Example .env (Cloudflare API token)
 config/traefik/         # Traefik reverse proxy config + compose
 config/apps/            # Per-app Docker Compose files + env examples
 pentest/                # Penetration testing toolkit (invoke via /pentest skill)
-pentest/pentest.sh      # Pentest CLI (run, list, modules, report)
-pentest/install.sh      # Tool installer (nmap, ffuf, nuclei, testssl, wordlists)
-pentest/scripts/        # Test modules (api, auth, headers, infra, ssrf, webauthn, etc.)
-pentest/targets/        # Target configs with endpoint inventory + known vulns
-pentest/tools/          # Wordlists (testssl cloned at runtime via install.sh)
-pentest/reports/        # Scan results (gitignored)
 scripts/appserver.sh    # Admin CLI (init, deploy, status, app management)
 scripts/bootstrap.sh    # EC2 user_data (Docker, Traefik, cloudflared)
 .github/workflows/      # CI — terraform fmt, validate, shellcheck, gitleaks
-.github/dependabot.yml  # Dependabot version updates (Terraform, Actions, Docker)
-SECURITY.md             # Vulnerability reporting policy
-README.md               # Project overview
 ```
 
 ## Key Commands
@@ -147,11 +123,6 @@ shellcheck scripts/*.sh                             # Shell script linting
 - SSM commands use `jq` for safe JSON encoding (no string interpolation injection)
 - `app env` masks values when displaying (shows KEY=***) and validates KEY=VALUE format
 - Bootstrap retries tunnel token fetch 5 times with 10s backoff
-- Cookie runs in passkey (WebAuthn) auth mode — no passwords, biometric/PIN only
-- `WEBAUTHN_RP_ID` is set to `matthewdeaves.com` (parent domain) so passkeys work across all subdomains
-- First user to register at `/register` is automatically promoted to admin
-- `app init` generates POSTGRES_PASSWORD and SECRET_KEY with `openssl rand` — never uses defaults
-- Django SECRET_KEY must persist across container restarts (stored in .env on instance)
 - Device code flow allows legacy devices without WebAuthn support to pair via 6-char codes
 - Cookie v1.13.0+ has built-in cron jobs: `cleanup_device_codes` (hourly), `cleanup_sessions` (daily 3:15 AM), `cleanup_search_images` (daily 3:30 AM)
 - `python manage.py cookie_admin status --json` includes `maintenance` block with last-run timestamps for each cron job and `device_codes` counts (pending/stale)
