@@ -88,6 +88,21 @@ docker exec cookie-web python manage.py cookie_admin list-users --json
 
 Returns all user accounts with activity status.
 
+### Create / Delete Users
+
+```bash
+# Create a regular user (no passkey, headless — for testing/automation)
+docker exec cookie-web python manage.py cookie_admin create-user USERNAME --json
+
+# Create an admin user
+docker exec cookie-web python manage.py cookie_admin create-user USERNAME --admin --json
+
+# Delete a user and all associated data (profile, sessions, etc.)
+docker exec cookie-web python manage.py cookie_admin delete-user USERNAME --json
+```
+
+Users created via `create-user` have no passkey and an unusable password — they can only be accessed via `create-session`. The pentest bootstrap uses this to create a `pentest_user` for regular-user testing, then deletes it after the run.
+
 ### User Management
 
 ```bash

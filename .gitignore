@@ -16,6 +16,7 @@ config/apps/*/.env.secrets
 # Pentest
 pentest/targets/*.yaml
 pentest/reports/
+pentest/tools/nikto/
 pentest/tools/testssl/
 pentest/tools/nuclei-templates/
 pentest/*.log
