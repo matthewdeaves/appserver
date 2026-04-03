@@ -669,15 +669,15 @@ cmd_destroy() {
     local arn="arn:aws:iam::${account_id}:policy/${name}"
     aws iam detach-user-policy --user-name "$caller_user" --policy-arn "$arn" 2>/dev/null || true
     delete_all_policy_versions "$arn" 2>/dev/null || true
-    aws iam delete-policy --policy-arn "$arn" 2>/dev/null \
-      && echo "  IAM policy ........... deleted ($name)" \
-      || true
+    if aws iam delete-policy --policy-arn "$arn" 2>/dev/null; then
+      echo "  IAM policy ........... deleted ($name)"
+    fi
   done
   echo "  IAM policy ........... kept (AppserverAdmin — needed for re-init)"
 
   # Remove appserver AWS profile
   if command -v python3 &>/dev/null; then
-    python3 -c "
+    if python3 -c "
 import configparser, os, sys
 for path, style in [('credentials', False), ('config', True)]:
     fpath = os.path.expanduser(f'~/.aws/{path}')
@@ -688,7 +688,9 @@ for path, style in [('credentials', False), ('config', True)]:
     if cp.has_section(section):
         cp.remove_section(section)
         with open(fpath, 'w') as f: cp.write(f)
-" 2>/dev/null && echo "  AWS profile .......... removed (appserver)" || true
+" 2>/dev/null; then
+      echo "  AWS profile .......... removed (appserver)"
+    fi
   fi
 
   echo "Full cleanup complete."
