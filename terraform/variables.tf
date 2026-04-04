@@ -109,6 +109,18 @@ variable "force_destroy" {
   default     = false
 }
 
+variable "docker_compose_version" {
+  description = "Docker Compose version to install (pinned for stability)"
+  type        = string
+  default     = "v5.1.1"
+}
+
+variable "docker_compose_sha256" {
+  description = "SHA256 hash of docker-compose-linux-aarch64 — must update when changing version"
+  type        = string
+  default     = "4b5c42952b7dd81f508d01a771df2a9e5dbffe9b8c5c7d983e738504ad38f056"
+}
+
 variable "cloudflared_version" {
   description = "Cloudflared version to install (pinned for stability)"
   type        = string

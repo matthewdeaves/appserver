@@ -337,6 +337,18 @@ ensure_state_backend() {
         }]
       }" || die "Failed to set bucket policy"
 
+    aws s3api put-bucket-lifecycle-configuration \
+      --bucket "$bucket" \
+      --region "$region" \
+      --lifecycle-configuration '{
+        "Rules": [{
+          "ID": "ExpireOldStateVersions",
+          "Status": "Enabled",
+          "Filter": {"Prefix": ""},
+          "NoncurrentVersionExpiration": {"NoncurrentDays": 90}
+        }]
+      }' || echo "  WARNING: Failed to set lifecycle policy (non-fatal)"
+
     echo "  State bucket ......... created"
   fi
 }

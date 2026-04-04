@@ -33,8 +33,54 @@ data "aws_ssm_parameter" "al2023_ami" {
 
 # IAM
 
+resource "aws_iam_policy" "instance_boundary" {
+  name        = "appserver-instance-boundary"
+  description = "Permissions boundary for appserver EC2 instance role — caps effective permissions even if inline policies are added"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "SSMParameters"
+        Effect = "Allow"
+        Action = ["ssm:GetParameter", "ssm:GetParameters"]
+        Resource = [
+          "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/appserver/*"
+        ]
+      },
+      {
+        Sid      = "S3Artifacts"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject", "s3:HeadObject"]
+        Resource = "${aws_s3_bucket.artifacts.arn}/*"
+      },
+      {
+        Sid    = "SSMAgent"
+        Effect = "Allow"
+        Action = [
+          "ssm:UpdateInstanceInformation",
+          "ssmmessages:CreateControlChannel",
+          "ssmmessages:CreateDataChannel",
+          "ssmmessages:OpenControlChannel",
+          "ssmmessages:OpenDataChannel",
+          "ec2messages:AcknowledgeMessage",
+          "ec2messages:DeleteMessage",
+          "ec2messages:FailMessage",
+          "ec2messages:GetEndpoint",
+          "ec2messages:GetMessages",
+          "ec2messages:SendReply"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+
+  tags = local.common_tags
+}
+
 resource "aws_iam_role" "appserver" {
-  name = "appserver-instance-role"
+  name                 = "appserver-instance-role"
+  permissions_boundary = aws_iam_policy.instance_boundary.arn
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -122,10 +168,13 @@ resource "aws_instance" "appserver" {
   vpc_security_group_ids = [aws_security_group.appserver.id]
 
   user_data_base64 = base64gzip(templatefile("${path.module}/../scripts/bootstrap.sh", {
-    region              = var.region
-    tunnel_token_ssm    = aws_ssm_parameter.tunnel_token.name
-    cloudflared_version = var.cloudflared_version
-    artifacts_bucket    = aws_s3_bucket.artifacts.id
+    region                 = var.region
+    tunnel_token_ssm       = aws_ssm_parameter.tunnel_token.name
+    cloudflared_version    = var.cloudflared_version
+    cloudflared_sha256     = var.cloudflared_sha256
+    docker_compose_version = var.docker_compose_version
+    docker_compose_sha256  = var.docker_compose_sha256
+    artifacts_bucket       = aws_s3_bucket.artifacts.id
   }))
 
   root_block_device {

@@ -11,10 +11,13 @@ echo "=== Appserver bootstrap started at $(date) ==="
 REGION="${region}"
 TUNNEL_TOKEN_SSM="${tunnel_token_ssm}"
 CLOUDFLARED_VERSION="${cloudflared_version}"
+CLOUDFLARED_SHA256="${cloudflared_sha256}"
+DOCKER_COMPOSE_VERSION="${docker_compose_version}"
+DOCKER_COMPOSE_SHA256="${docker_compose_sha256}"
 ARTIFACTS_BUCKET="${artifacts_bucket}"
 
 # Validate Terraform-injected variables
-for var_name in REGION TUNNEL_TOKEN_SSM CLOUDFLARED_VERSION ARTIFACTS_BUCKET; do
+for var_name in REGION TUNNEL_TOKEN_SSM CLOUDFLARED_VERSION CLOUDFLARED_SHA256 DOCKER_COMPOSE_VERSION DOCKER_COMPOSE_SHA256 ARTIFACTS_BUCKET; do
   val="$${!var_name}"
   [[ -n "$val" ]] || die "$var_name is empty — check Terraform templatefile() variables"
 done
@@ -58,12 +61,14 @@ DOCKERCFG
 
 systemctl enable --now docker || die "Failed to start Docker"
 
-# Docker Compose plugin (ARM)
+# Docker Compose plugin (ARM, pinned version + SHA256 verification)
 DOCKER_CONFIG=/usr/local/lib/docker
 mkdir -p "$DOCKER_CONFIG/cli-plugins"
 curl -fsSL --retry 3 --retry-delay 5 \
-  "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-aarch64" \
+  "https://github.com/docker/compose/releases/download/$${DOCKER_COMPOSE_VERSION}/docker-compose-linux-aarch64" \
   -o "$DOCKER_CONFIG/cli-plugins/docker-compose" || die "Failed to download docker-compose"
+echo "$${DOCKER_COMPOSE_SHA256}  $DOCKER_CONFIG/cli-plugins/docker-compose" | sha256sum -c - \
+  || die "Docker Compose checksum mismatch (expected $${DOCKER_COMPOSE_SHA256})"
 chmod +x "$DOCKER_CONFIG/cli-plugins/docker-compose"
 
 # --- Directory structure ---
@@ -77,6 +82,8 @@ if ! curl -fsSL --retry 3 --retry-delay 5 "$CLOUDFLARED_URL" -o /tmp/cloudflared
   aws s3 cp "s3://$${ARTIFACTS_BUCKET}/deploy/cloudflared-linux-arm64" /tmp/cloudflared --region "$REGION" \
     || die "Failed to download cloudflared from both GitHub and S3"
 fi
+echo "$${CLOUDFLARED_SHA256}  /tmp/cloudflared" | sha256sum -c - \
+  || die "Cloudflared checksum mismatch (expected $${CLOUDFLARED_SHA256})"
 install -m 755 /tmp/cloudflared /usr/local/bin/cloudflared
 rm -f /tmp/cloudflared
 
@@ -166,6 +173,8 @@ entryPoints:
     address: ":80"
     forwardedHeaders:
       trustedIPs:
+        - "127.0.0.0/8"
+        - "172.16.0.0/12"
         - "173.245.48.0/20"
         - "103.21.244.0/22"
         - "103.22.200.0/22"

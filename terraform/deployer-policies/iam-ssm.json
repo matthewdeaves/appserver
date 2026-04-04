@@ -147,7 +147,7 @@
       "Resource": "*"
     },
     {
-      "Sid": "DenyEscalation",
+      "Sid": "DenyManagedPolicyEscalation",
       "Effect": "Deny",
       "Action": [
         "iam:AttachRolePolicy",
@@ -164,6 +164,14 @@
           ]
         }
       }
+    },
+    {
+      "Sid": "DenyRemovePermissionsBoundary",
+      "Effect": "Deny",
+      "Action": [
+        "iam:DeleteRolePermissionsBoundary"
+      ],
+      "Resource": "*"
     }
   ]
 }
