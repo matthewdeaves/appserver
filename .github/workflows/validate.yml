@@ -30,10 +30,18 @@ jobs:
       - name: Terraform Validate
         run: terraform -chdir=terraform validate
 
-      - name: ShellCheck
+      - name: ShellCheck scripts
         uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # v2.0.0
         with:
           scandir: scripts/
+
+      - name: ShellCheck pentest
+        uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # v2.0.0
+        env:
+          SHELLCHECK_OPTS: '-x'
+        with:
+          scandir: pentest/
+          severity: warning
 
       - name: Gitleaks
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
