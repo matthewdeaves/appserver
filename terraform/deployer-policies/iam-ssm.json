@@ -50,6 +50,22 @@
       ]
     },
     {
+      "Sid": "IAMBoundaryPolicy",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreatePolicy",
+        "iam:GetPolicy",
+        "iam:GetPolicyVersion",
+        "iam:DeletePolicy",
+        "iam:ListPolicyVersions",
+        "iam:CreatePolicyVersion",
+        "iam:DeletePolicyVersion",
+        "iam:TagPolicy",
+        "iam:UntagPolicy"
+      ],
+      "Resource": "arn:aws:iam::*:policy/Appserver*"
+    },
+    {
       "Sid": "SSMParameters",
       "Effect": "Allow",
       "Action": [
