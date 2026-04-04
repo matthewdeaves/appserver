@@ -604,7 +604,20 @@ cmd_destroy() {
       -reconfigure \
       -input=false 2>&1 | mask_account_ids
 
-    terraform destroy -input=false -auto-approve 2>&1 | mask_account_ids
+    # Disable EC2 termination protection before destroy (it blocks terraform destroy)
+    local instance_id
+    instance_id="$(terraform output -json instance_id 2>/dev/null | jq -r '.')" || true
+    if [[ -n "$instance_id" ]]; then
+      echo "Disabling termination protection on $instance_id..."
+      aws ec2 modify-instance-attribute \
+        --instance-id "$instance_id" \
+        --no-disable-api-termination \
+        --region "$region" 2>/dev/null || true
+    fi
+
+    # force_destroy=true lets Terraform delete S3 buckets that contain objects
+    terraform destroy -input=false -auto-approve \
+      -var "force_destroy=true" 2>&1 | mask_account_ids
     echo "Infrastructure destroyed."
   else
     echo "State backend unavailable — skipping terraform destroy."
