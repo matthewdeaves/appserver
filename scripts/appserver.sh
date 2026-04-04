@@ -789,7 +789,7 @@ cmd_app_deploy() {
     docker compose ps 2>&1
 
     rm -rf /tmp/appserver-artifact /tmp/appserver-artifact.tar.gz
-  " 120
+  " 120 || { echo "ERROR: Deploy failed on instance — check 'appserver logs $app'" >&2; return 1; }
 
   echo "$app deployed."
 }
