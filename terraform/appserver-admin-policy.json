@@ -11,7 +11,9 @@
         "iam:ListPolicyVersions",
         "iam:CreatePolicyVersion",
         "iam:DeletePolicyVersion",
-        "iam:DeletePolicy"
+        "iam:DeletePolicy",
+        "iam:TagPolicy",
+        "iam:UntagPolicy"
       ],
       "Resource": [
         "arn:aws:iam::*:policy/Appserver*"
@@ -63,6 +65,7 @@
         "s3:PutEncryptionConfiguration",
         "s3:PutBucketPublicAccessBlock",
         "s3:PutBucketPolicy",
+        "s3:PutLifecycleConfiguration",
         "s3:ListBucket",
         "s3:ListBucketVersions",
         "s3:GetObject",

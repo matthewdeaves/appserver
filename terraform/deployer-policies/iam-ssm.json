@@ -18,7 +18,8 @@
         "iam:ListInstanceProfilesForRole",
         "iam:PassRole",
         "iam:TagRole",
-        "iam:UntagRole"
+        "iam:UntagRole",
+        "iam:PutRolePermissionsBoundary"
       ],
       "Resource": [
         "arn:aws:iam::*:role/appserver-*"

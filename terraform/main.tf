@@ -34,7 +34,7 @@ data "aws_ssm_parameter" "al2023_ami" {
 # IAM
 
 resource "aws_iam_policy" "instance_boundary" {
-  name        = "appserver-instance-boundary"
+  name        = "Appserver-instance-boundary"
   description = "Permissions boundary for appserver EC2 instance role — caps effective permissions even if inline policies are added"
 
   policy = jsonencode({
