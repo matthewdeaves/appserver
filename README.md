@@ -37,7 +37,7 @@ Client → Cloudflare → Tunnel → Traefik (:80) → App container
 
 ```
 appserver.sh init                  Interactive first-time setup
-appserver.sh deploy                Terraform apply (auto-uploads config)
+appserver.sh deploy                Terraform apply + upload config to S3
 appserver.sh destroy               Terraform destroy + optional cleanup
 appserver.sh status                Running containers + resource usage
 appserver.sh start / stop          EC2 instance power management

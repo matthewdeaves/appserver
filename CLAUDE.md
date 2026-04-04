@@ -113,7 +113,7 @@ shellcheck scripts/*.sh                             # Shell script linting
 - Region is read from `terraform.tfvars` by appserver.sh — no hardcoded region
 - Cloudflare API token needs: Zone DNS Edit, Zone Settings Edit, Zone WAF Edit, Account Cloudflare Tunnel Edit, Account Zero Trust Edit
 - The CLI requires `aws`, `terraform`, and `jq`
-- `deploy` auto-uploads artifacts before running terraform
+- `deploy` runs terraform apply, then uploads artifacts to S3
 - `app deploy` pulls artifacts + latest Docker image, then restarts the compose stack
 - `app remove` preserves Docker volumes — delete manually if needed
 - Cookie image version is pinned in `docker-compose.yml` (single source of truth). To upgrade: update the version in compose, commit, `config push`, `app deploy`. Do NOT set `COOKIE_VERSION` in the instance `.env` — the compose default is authoritative
@@ -138,7 +138,9 @@ The `pentest/` directory contains a bash-based security testing toolkit. Invoke 
 ```bash
 ./pentest/pentest.sh run cookie              # Full app-layer scan
 ./pentest/pentest.sh run appserver           # Full infra-layer scan
+./pentest/pentest.sh run-all                 # Both targets in sequence
 ./pentest/pentest.sh run cookie --module ssrf # Single module
+./pentest/pentest.sh run cookie --verbose    # Show full module output on terminal
 ./pentest/pentest.sh modules                 # List all modules
 ./pentest/pentest.sh report cookie           # Show latest report
 ```
@@ -149,6 +151,8 @@ The `pentest/` directory contains a bash-based security testing toolkit. Invoke 
 - Run `pentest/install.sh` once to install tools (nmap, ffuf, nuclei, testssl.sh, wordlists)
 - Target configs (`pentest/targets/*.yaml`) document all known endpoints, rate limits, and vulnerabilities
 - Reports are gitignored — findings stay local
-- 14 modules: recon, headers, tls, paths, nikto, nuclei, api, auth, ai, injection, ssrf, infra, legacy, webauthn
+- 14 modules: recon, headers, tls, nikto, nuclei, api, auth, ai, injection, ssrf, infra, legacy, webauthn, paths
 - Default rate: 50 req/s. Auth endpoints (`/api/auth/`) automatically use 2 req/s to stay under Cloudflare WAF rate limits (20 req/10s)
 - The `appserver` target auto-skips app-layer modules; use the `cookie` target for app testing
+- Report directory structure: `reports/<target>/<timestamp>/` with `results.json` (machine-readable), `SUMMARY.md` (human-readable), `run.log` (full transcript), `modules/` (per-module output), `tools/` (tool artifacts)
+- Use `/pentest-review` skill to review scan results; it prefers `results.json` for quick structured triage
