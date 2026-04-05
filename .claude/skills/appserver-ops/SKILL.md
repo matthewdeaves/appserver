@@ -102,7 +102,7 @@ Report your diagnosis to the user before proceeding to Phase 3.
 
 ## Conventions
 
-- `$PROJECT_ROOT` in reference files means `/home/matthew/appserver`
+- `$PROJECT_ROOT` in reference files means the appserver repo root (the working directory)
 - Use the CLI (`appserver.sh`) when it wraps the operation you need
 
 ## Gotchas
