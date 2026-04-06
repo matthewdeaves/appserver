@@ -39,6 +39,13 @@ scripts/bootstrap.sh    # EC2 user_data (Docker, Traefik, cloudflared)
 ./scripts/appserver.sh config push              # Push config + restart Traefik
 ./scripts/appserver.sh config check-ips        # Audit Cloudflare IP ranges in traefik.yml
 ./scripts/appserver.sh config check-ips --fix  # Auto-sync stale ranges
+./scripts/appserver.sh threats                 # Analyze access logs for threats (last 24h)
+./scripts/appserver.sh threats --since 1h      # Analyze last hour
+./scripts/appserver.sh threats report          # View latest threat report
+./scripts/appserver.sh threats list            # List all threat reports
+./scripts/appserver.sh threats block <ip>      # Block IP via Cloudflare WAF
+./scripts/appserver.sh threats unblock <ip>    # Unblock IP
+./scripts/appserver.sh threats blocked         # List blocked IPs
 ```
 
 ## Deploying Cookie (First Time)
@@ -156,3 +163,17 @@ The `pentest/` directory contains a bash-based security testing toolkit. Invoke 
 - The `appserver` target auto-skips app-layer modules; use the `cookie` target for app testing
 - Report directory structure: `reports/<target>/<timestamp>/` with `results.json` (machine-readable), `SUMMARY.md` (human-readable), `run.log` (full transcript), `modules/` (per-module output), `tools/` (tool artifacts)
 - Use `/pentest-review` skill to review scan results; it prefers `results.json` for quick structured triage
+
+## Threat Analysis
+
+The `threats` subcommand provides access log analysis and Cloudflare WAF integration for detecting and blocking attackers. Invoke via the `/threat-ops` skill or CLI directly.
+
+- Traefik access logs (JSON format) are written to `/var/log/traefik/access.log` on the instance
+- Log rotation: daily, 14-day retention, compressed, ~500MB budget (`/etc/logrotate.d/traefik`)
+- Analysis runs on-instance via SSM (jq processes access logs, returns JSON summary)
+- Reports are stored locally in `reports/threats/<timestamp>/` (gitignored)
+- Report files: `report.json` (machine), `SUMMARY.md` (human), `actions.json` (audit trail)
+- IP blocking uses Cloudflare IP Access Rules API (not Terraform — ephemeral operational actions)
+- CF edge data (WAF blocks, rate limits) is optionally enriched via GraphQL Analytics API
+- `CLOUDFLARE_API_TOKEN` must be set for block/unblock/blocked commands (Zone WAF Edit permission)
+- The threat-ops skill (`/threat-ops`) orchestrates analysis and offers to enact high-confidence block recommendations

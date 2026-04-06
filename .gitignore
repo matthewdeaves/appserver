@@ -21,5 +21,8 @@ pentest/tools/testssl/
 pentest/tools/nuclei-templates/
 pentest/*.log
 
+# Threat reports
+reports/threats/
+
 # Claude Code
 .claude/settings.local.json
