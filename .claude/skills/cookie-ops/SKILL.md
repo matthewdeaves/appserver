@@ -1,9 +1,10 @@
 ---
 name: cookie-ops
-description: "Diagnose, manage, and troubleshoot the Cookie app deployed on appserver. Use when the user mentions cookie, device pairing, passkeys, recipe features, cookie version upgrades, cookie logs, cookie cron jobs, or cookie admin commands. Also triggers for: 'pair my device', 'upgrade cookie', 'cookie is down', 'check cookie logs'."
+description: "Diagnose, manage, and troubleshoot the Cookie app on appserver. Use when: cookie health, device pairing, passkeys, version upgrades, cookie logs, cron jobs, cookie admin commands, 'cookie is down'."
 user-invocable: true
 argument-hint: "[symptom, action, or question about Cookie]"
 allowed-tools: "Read, Grep, Glob, Bash, Agent"
+effort: high
 ---
 
 ## User Input

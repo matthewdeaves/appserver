@@ -1,9 +1,10 @@
 ---
 name: appserver-ops
-description: "Diagnose, fix, and advise on appserver infrastructure issues. Use when: checking if the server is up/healthy, debugging connection failures (timeouts, 502s, 403s), Traefik routing issues, Cloudflare Tunnel problems, EC2 instance management, resource pressure (memory, disk), security posture, or deployment failures. Also triggers for: 'is it up', 'check the infra', 'deploy failed', 'instance won't start'."
+description: "Diagnose, fix, and advise on appserver infrastructure issues. Use when: checking if the server is up/healthy, debugging connection failures (timeouts, 502s, 403s), Traefik routing, Cloudflare Tunnel, EC2, deploy failures."
 user-invocable: true
 argument-hint: "[symptom or error description]"
 allowed-tools: "Read, Grep, Glob, Bash, Agent"
+effort: high
 ---
 
 ## User Input

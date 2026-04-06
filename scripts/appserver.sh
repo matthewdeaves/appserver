@@ -570,6 +570,16 @@ cmd_deploy() {
     -reconfigure \
     -input=false 2>&1 | mask_account_ids
 
+  # Import orphaned artifacts bucket if it exists but isn't in state
+  # (happens when a previous destroy deleted state but the bucket survived)
+  local artifacts_bucket
+  artifacts_bucket="$(get_artifacts_bucket)"
+  if aws s3api head-bucket --bucket "$artifacts_bucket" --region "$region" 2>/dev/null \
+     && ! terraform state show aws_s3_bucket.artifacts &>/dev/null; then
+    echo "Importing existing artifacts bucket into state..."
+    terraform import aws_s3_bucket.artifacts "$artifacts_bucket" 2>&1 | mask_account_ids
+  fi
+
   terraform apply -input=false -auto-approve 2>&1 | mask_account_ids
 
   echo
@@ -662,6 +672,31 @@ cmd_destroy() {
       || echo "  IAM user ............. failed to delete ($deployer_user)"
   else
     echo "  IAM user ............. already gone ($deployer_user)"
+  fi
+
+  # Empty and delete artifacts bucket (terraform may have left it if state was lost)
+  local artifacts_bucket="appserver-artifacts-${account_id}-${region}"
+  local artifacts_status
+  artifacts_status=$(aws s3api head-bucket --bucket "$artifacts_bucket" 2>&1; echo "EXIT:$?")
+  if echo "$artifacts_status" | grep -q "EXIT:0"; then
+    echo "  Artifacts bucket ..... emptying"
+    aws s3api list-object-versions --bucket "$artifacts_bucket" --output json 2>/dev/null \
+      | jq -r '.Versions[]? | "\(.Key)\t\(.VersionId)"' \
+      | while IFS=$'\t' read -r key vid; do
+          aws s3api delete-object --bucket "$artifacts_bucket" --key "$key" --version-id "$vid" 2>/dev/null || true
+        done
+    aws s3api list-object-versions --bucket "$artifacts_bucket" --output json 2>/dev/null \
+      | jq -r '.DeleteMarkers[]? | "\(.Key)\t\(.VersionId)"' \
+      | while IFS=$'\t' read -r key vid; do
+          aws s3api delete-object --bucket "$artifacts_bucket" --key "$key" --version-id "$vid" 2>/dev/null || true
+        done
+    aws s3 rb "s3://$artifacts_bucket" 2>/dev/null \
+      && echo "  Artifacts bucket ..... deleted" \
+      || echo "  Artifacts bucket ..... failed to delete"
+  elif echo "$artifacts_status" | grep -q "403\|Forbidden\|AccessDenied"; then
+    echo "  Artifacts bucket ..... exists but access denied"
+  else
+    echo "  Artifacts bucket ..... already gone"
   fi
 
   # Empty and delete state bucket (before deleting admin policy that grants S3 access)
