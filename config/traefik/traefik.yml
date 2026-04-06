@@ -43,5 +43,15 @@ providers:
 ping:
   entryPoint: traefik
 
+accessLog:
+  filePath: /var/log/traefik/access.log
+  format: json
+  fields:
+    headers:
+      defaultMode: drop
+      names:
+        CF-Connecting-IP: keep
+        User-Agent: keep
+
 log:
   level: WARN

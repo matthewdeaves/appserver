@@ -8,6 +8,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /opt/appserver/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - /var/log/traefik:/var/log/traefik
     healthcheck:
       test: ["CMD", "traefik", "healthcheck", "--ping"]
       interval: 30s

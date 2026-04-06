@@ -250,6 +250,20 @@ cat > /etc/logrotate.d/appserver <<'LOGROTATE'
 }
 LOGROTATE
 
+mkdir -p /var/log/traefik
+cat > /etc/logrotate.d/traefik <<'LOGROTATE'
+/var/log/traefik/access.log {
+  daily
+  rotate 14
+  compress
+  delaycompress
+  missingok
+  notifempty
+  copytruncate
+  create 0644 root root
+}
+LOGROTATE
+
 # --- Deploy apps if configs exist ---
 failed_apps=()
 for app_dir in /opt/appserver/apps/*/; do
