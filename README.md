@@ -22,9 +22,12 @@ Client → Cloudflare → Tunnel → Traefik (:80) → App container
 - AWS CLI (configured with credentials)
 - Terraform
 - jq
+- git-crypt (for pentest target configs)
 - Cloudflare API token with: Zone DNS Edit, Zone Settings Edit, Zone WAF Edit, Cloudflare Tunnel Edit, Zero Trust Edit
 
-## Quick Start
+## Getting Started
+
+### First-time infrastructure setup
 
 ```bash
 ./scripts/appserver.sh init              # Interactive setup (IAM, state bucket, tfvars)
@@ -32,6 +35,32 @@ Client → Cloudflare → Tunnel → Traefik (:80) → App container
 ./scripts/appserver.sh app init cookie   # Generate secrets on instance
 ./scripts/appserver.sh app deploy cookie # Pull image + start
 ```
+
+### Joining an existing deployment
+
+If the infrastructure is already running and you're setting up a new dev machine:
+
+```bash
+git clone git@github.com:matthewdeaves/appserver.git
+cd appserver
+
+# Configure AWS CLI with the appserver-deployer credentials (not root)
+aws configure --profile appserver
+# Enter the appserver-deployer access key ID and secret access key
+
+# Decrypt pentest target configs (fetches key from SSM automatically)
+./scripts/appserver.sh setup unlock
+```
+
+The CLI auto-detects the `appserver` AWS profile if configured. The deployer user has the minimum permissions needed — do not use root for day-to-day work.
+
+### Pentest target configs
+
+Pentest target YAMLs (`pentest/targets/*.yaml`) are encrypted via git-crypt. They contain attack surface details, rate limits, and vulnerability history. The `.example` files are unencrypted templates.
+
+- `setup unlock` — decrypt using key from SSM (requires `ssm:GetParameter` on `/appserver/*`)
+- `setup unlock /path/to/key` — decrypt using a local key file
+- `setup lock` — re-encrypt files in working tree
 
 ## CLI Reference
 
@@ -51,7 +80,16 @@ appserver.sh app list              All apps + status
 appserver.sh app remove <name>     Stop + remove (preserves volumes)
 appserver.sh app restart <name>    Restart app containers
 appserver.sh app env <name>        View/set environment variables
+
 appserver.sh config push           Push config + restart Traefik
+appserver.sh config check-ips      Audit Cloudflare IP ranges in traefik.yml
+
+appserver.sh setup unlock          Decrypt pentest targets (key from SSM)
+appserver.sh setup lock            Re-encrypt pentest targets
+
+appserver.sh threats               Analyze access logs for threats (last 24h)
+appserver.sh threats block <ip>    Block IP via Cloudflare WAF
+appserver.sh threats blocked       List blocked IPs
 ```
 
 ## Adding an App
@@ -65,15 +103,16 @@ appserver.sh config push           Push config + restart Traefik
 
 ```
 terraform/          Infrastructure (EC2, IAM, Cloudflare Tunnel/DNS/Access, WAF, monitoring, snapshots)
-config/traefik/     Traefik reverse proxy config + compose
+config/traefik/     Traefik reverse proxy config + compose + HSTS middleware
 config/apps/        Per-app Docker Compose stacks + env examples
 scripts/            appserver.sh (admin CLI) + bootstrap.sh (EC2 user_data)
-.github/            CI (terraform fmt/validate, shellcheck, gitleaks) + Dependabot config
+pentest/            Penetration testing toolkit (14 modules, invoke via /pentest skill)
+.github/            CI (terraform fmt/validate, tfsec, shellcheck, gitleaks, dependency-review)
 ```
 
 ## Security
 
-See [SECURITY.md](SECURITY.md) for vulnerability reporting.
+See [SECURITY.md](SECURITY.md) for vulnerability reporting and security review findings.
 
 ## License
 
