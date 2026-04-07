@@ -1,0 +1,4 @@
+# git-crypt: pentest target configs contain attack surface details,
+# rate limits, known vulnerabilities, and false positive analysis.
+# Encrypted at rest in git, auto-decrypted for authorized users.
+pentest/targets/*.yaml filter=git-crypt diff=git-crypt

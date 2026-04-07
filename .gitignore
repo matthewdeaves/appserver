@@ -13,16 +13,15 @@ config/apps/*/.env.secrets
 # OS
 .DS_Store
 
-# Pentest
-pentest/targets/*.yaml
+# Pentest (targets/*.yaml tracked via git-crypt — see .gitattributes)
 pentest/reports/
 pentest/tools/nikto/
 pentest/tools/testssl/
 pentest/tools/nuclei-templates/
 pentest/*.log
 
-# Threat reports
-reports/threats/
+# Reports (pentest, threats, security reviews — all local)
+reports/
 
 # Claude Code
 .claude/settings.local.json
