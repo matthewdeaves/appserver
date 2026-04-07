@@ -72,7 +72,7 @@ echo "$${DOCKER_COMPOSE_SHA256}  $DOCKER_CONFIG/cli-plugins/docker-compose" | sh
 chmod +x "$DOCKER_CONFIG/cli-plugins/docker-compose"
 
 # --- Directory structure ---
-mkdir -p /opt/appserver/{traefik,apps}
+mkdir -p /opt/appserver/{traefik/dynamic,apps}
 
 # --- Cloudflared ---
 echo "Installing cloudflared $${CLOUDFLARED_VERSION}..."
@@ -155,8 +155,8 @@ if aws s3 cp "s3://$${ARTIFACTS_BUCKET}/deploy/appserver-artifact.tar.gz" /tmp/a
 
   tar xzf /tmp/appserver-artifact.tar.gz -C /tmp/
 
-  # Traefik config
-  cp /tmp/appserver-artifact/traefik/* /opt/appserver/traefik/ 2>/dev/null || true
+  # Traefik config (includes dynamic/ middleware directory)
+  cp -r /tmp/appserver-artifact/traefik/* /opt/appserver/traefik/ 2>/dev/null || true
 
   # App configs
   if [[ -d /tmp/appserver-artifact/apps ]]; then
@@ -171,6 +171,9 @@ else
 entryPoints:
   web:
     address: ":80"
+    http:
+      middlewares:
+        - hsts@file
     forwardedHeaders:
       trustedIPs:
         - "127.0.0.0/8"
@@ -198,6 +201,9 @@ entryPoints:
         - "2a06:98c0::/29"
         - "2c0f:f248::/32"
 providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
   docker:
     endpoint: "unix:///var/run/docker.sock"
     exposedByDefault: false
@@ -207,6 +213,17 @@ ping:
 log:
   level: WARN
 TRAEFIK
+
+  # HSTS middleware (defense-in-depth, matches config/traefik/dynamic/security-headers.yml)
+  cat > /opt/appserver/traefik/dynamic/security-headers.yml <<'MIDDLEWARE'
+http:
+  middlewares:
+    hsts:
+      headers:
+        stsSeconds: 63072000
+        stsIncludeSubdomains: true
+        stsPreload: true
+MIDDLEWARE
 
   cat > /opt/appserver/traefik/docker-compose.yml <<'COMPOSE'
 services:
@@ -219,6 +236,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /opt/appserver/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - /opt/appserver/traefik/dynamic:/etc/traefik/dynamic:ro
     networks:
       - appserver
 

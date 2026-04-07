@@ -175,12 +175,21 @@
         "ForAnyValue:ArnNotLike": {
           "iam:PolicyARN": [
             "arn:aws:iam::*:policy/Appserver*",
-            "arn:aws:iam::*:policy/appserver*",
+            "arn:aws:iam::*:policy/appserver-*",
             "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
             "arn:aws:iam::aws:policy/service-role/AWSDataLifecycleManagerServiceRole"
           ]
         }
       }
+    },
+    {
+      "Sid": "DenyInlinePolicyOnInstanceRole",
+      "Effect": "Deny",
+      "Action": [
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy"
+      ],
+      "Resource": "arn:aws:iam::*:role/appserver-instance-role"
     },
     {
       "Sid": "DenyRemovePermissionsBoundary",

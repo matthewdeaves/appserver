@@ -1,6 +1,9 @@
 entryPoints:
   web:
     address: ":80"
+    http:
+      middlewares:
+        - hsts@file
     forwardedHeaders:
       # Only trust forwarded headers from Cloudflare IP ranges
       # https://www.cloudflare.com/ips-v4 / ips-v6
@@ -35,6 +38,9 @@ entryPoints:
         - "2c0f:f248::/32"
 
 providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
   docker:
     endpoint: "unix:///var/run/docker.sock"
     exposedByDefault: false

@@ -164,6 +164,18 @@ The `pentest/` directory contains a bash-based security testing toolkit. Invoke 
 - Report directory structure: `reports/<target>/<timestamp>/` with `results.json` (machine-readable), `SUMMARY.md` (human-readable), `run.log` (full transcript), `modules/` (per-module output), `tools/` (tool artifacts)
 - Use `/pentest-review` skill to review scan results; it prefers `results.json` for quick structured triage
 
+## Security Reviews
+
+Independent security reviews are tracked in GitHub issues #3 (infra) and #6 (app). Key design decisions:
+
+- **Permissions boundary** on instance role caps effective permissions regardless of inline/managed policies
+- **Deployer IAM** restricted: deny on inline policies for instance role, managed policy allowlist enforced
+- **State bucket** principal-restricted policy limits access to deployer + root only
+- **Traefik HSTS** middleware adds defense-in-depth (Cookie nginx + Cloudflare also set HSTS)
+- **tfsec** runs in CI to catch IaC security misconfigurations
+- **LOW-1 (`home_ip`)** and **LOW-2 (Docker socket)** are accepted risks — see SECURITY.md
+- Pentest targets (`pentest/targets/*.yaml`) document all findings with fix history
+
 ## Threat Analysis
 
 The `threats` subcommand provides access log analysis and Cloudflare WAF integration for detecting and blocking attackers. Invoke via the `/threat-ops` skill or CLI directly.

@@ -1,0 +1,11 @@
+# Security headers middleware — applied to all routes via entrypoint default.
+# Defense-in-depth: Cookie's nginx also sets HSTS; Cloudflare overrides to 180 days at edge.
+# This ensures HSTS is present even if an app doesn't set it internally.
+
+http:
+  middlewares:
+    hsts:
+      headers:
+        stsSeconds: 63072000
+        stsIncludeSubdomains: true
+        stsPreload: true

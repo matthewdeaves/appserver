@@ -355,25 +355,56 @@ ensure_state_backend() {
         BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true \
       || die "Failed to set public access block"
 
+    # State bucket policy: deny non-SSL + restrict access to deployer only (MED-1)
+    local caller_arn
+    caller_arn=$(aws sts get-caller-identity --query Arn --output text --region "$region") \
+      || die "Failed to get caller ARN"
+    local account_id
+    account_id=$(aws sts get-caller-identity --query Account --output text --region "$region")
+
     aws s3api put-bucket-policy \
       --bucket "$bucket" \
       --region "$region" \
-      --policy "{
-        \"Version\": \"2012-10-17\",
-        \"Statement\": [{
-          \"Sid\": \"DenyNonSSL\",
-          \"Effect\": \"Deny\",
-          \"Principal\": \"*\",
-          \"Action\": \"s3:*\",
-          \"Resource\": [
-            \"arn:aws:s3:::$bucket\",
-            \"arn:aws:s3:::$bucket/*\"
-          ],
-          \"Condition\": {
-            \"Bool\": { \"aws:SecureTransport\": \"false\" }
-          }
-        }]
-      }" || die "Failed to set bucket policy"
+      --policy "$(jq -n \
+        --arg bucket "$bucket" \
+        --arg caller "$caller_arn" \
+        --arg account "$account_id" \
+        '{
+          Version: "2012-10-17",
+          Statement: [
+            {
+              Sid: "DenyNonSSL",
+              Effect: "Deny",
+              Principal: "*",
+              Action: "s3:*",
+              Resource: [
+                "arn:aws:s3:::\($bucket)",
+                "arn:aws:s3:::\($bucket)/*"
+              ],
+              Condition: {
+                Bool: { "aws:SecureTransport": "false" }
+              }
+            },
+            {
+              Sid: "RestrictStateAccess",
+              Effect: "Deny",
+              Principal: "*",
+              Action: "s3:*",
+              Resource: [
+                "arn:aws:s3:::\($bucket)",
+                "arn:aws:s3:::\($bucket)/*"
+              ],
+              Condition: {
+                StringNotLike: {
+                  "aws:PrincipalArn": [
+                    \($caller),
+                    "arn:aws:iam::\($account):root"
+                  ]
+                }
+              }
+            }
+          ]
+        }')" || die "Failed to set bucket policy"
 
     aws s3api put-bucket-lifecycle-configuration \
       --bucket "$bucket" \
@@ -404,8 +435,8 @@ package_and_upload_artifact() {
   mkdir -p "$tmpdir/appserver-artifact/traefik"
   mkdir -p "$tmpdir/appserver-artifact/apps"
 
-  # Copy traefik config
-  cp "$CONFIG_DIR/traefik/"* "$tmpdir/appserver-artifact/traefik/" 2>/dev/null || true
+  # Copy traefik config (includes dynamic/ middleware directory)
+  cp -r "$CONFIG_DIR/traefik/"* "$tmpdir/appserver-artifact/traefik/" 2>/dev/null || true
 
   # Copy app configs (compose files + env examples, NOT .env secrets)
   if [[ -d "$CONFIG_DIR/apps" ]]; then

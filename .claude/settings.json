@@ -22,5 +22,16 @@
         ]
       }
     ]
+  },
+  "extraKnownMarketplaces": {
+    "antonbabenko": {
+      "source": {
+        "source": "github",
+        "repo": "antonbabenko/terraform-skill"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "terraform-skill@antonbabenko": true
   }
 }

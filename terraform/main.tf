@@ -96,9 +96,13 @@ resource "aws_iam_role" "appserver" {
   tags = local.common_tags
 }
 
-resource "aws_iam_role_policy" "ssm_parameters" {
-  name = "ssm-parameters"
-  role = aws_iam_role.appserver.id
+# Instance role policies — managed (not inline) to allow deployer deny on PutRolePolicy.
+# See HIGH-1 in security review: inline policies on instance role could bypass boundary
+# if deployer credentials were compromised. Managed policies + deny prevents this.
+
+resource "aws_iam_policy" "instance_ssm_parameters" {
+  name        = "appserver-instance-ssm-parameters"
+  description = "Allow instance to read SSM parameters under /appserver/*"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -113,11 +117,18 @@ resource "aws_iam_role_policy" "ssm_parameters" {
       ]
     }]
   })
+
+  tags = local.common_tags
 }
 
-resource "aws_iam_role_policy" "s3_artifacts" {
-  name = "s3-artifacts"
-  role = aws_iam_role.appserver.id
+resource "aws_iam_role_policy_attachment" "instance_ssm_parameters" {
+  role       = aws_iam_role.appserver.name
+  policy_arn = aws_iam_policy.instance_ssm_parameters.arn
+}
+
+resource "aws_iam_policy" "instance_s3_artifacts" {
+  name        = "appserver-instance-s3-artifacts"
+  description = "Allow instance to read S3 artifacts bucket"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -127,6 +138,13 @@ resource "aws_iam_role_policy" "s3_artifacts" {
       Resource = "${aws_s3_bucket.artifacts.arn}/*"
     }]
   })
+
+  tags = local.common_tags
+}
+
+resource "aws_iam_role_policy_attachment" "instance_s3_artifacts" {
+  role       = aws_iam_role.appserver.name
+  policy_arn = aws_iam_policy.instance_s3_artifacts.arn
 }
 
 resource "aws_iam_role_policy_attachment" "ssm_managed" {
