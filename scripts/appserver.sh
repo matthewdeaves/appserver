@@ -1873,6 +1873,78 @@ cmd_threats() {
   esac
 }
 
+# --- Setup ---
+
+cmd_setup_unlock() {
+  if ! command -v git-crypt &>/dev/null; then
+    die "git-crypt not found. Install it first: https://github.com/AGWA/git-crypt"
+  fi
+
+  # Check if already unlocked by testing if an encrypted file is readable text
+  local test_file
+  test_file=$(git-crypt status 2>/dev/null | grep "^    encrypted:" | head -1 | sed 's/^    encrypted: *//')
+  if [[ -n "$test_file" && -f "$test_file" ]] && file -b "$test_file" | grep -qi text; then
+    echo "Already unlocked — encrypted files are readable:"
+    git-crypt status 2>/dev/null | grep "^    encrypted:" | sed 's/^    encrypted: */  /'
+    return 0
+  fi
+
+  local key_file="${1:-}"
+
+  if [[ -n "$key_file" ]]; then
+    # Unlock with provided key file
+    [[ -f "$key_file" ]] || die "Key file not found: $key_file"
+    git-crypt unlock "$key_file"
+    echo "Unlocked with key file."
+  else
+    # Fetch key from SSM
+    echo "Fetching git-crypt key from SSM..."
+    local region
+    region="$(get_region)"
+    local tmpkey
+    tmpkey=$(mktemp) || die "Failed to create temp file"
+    trap 'rm -f "$tmpkey"' RETURN
+
+    aws ssm get-parameter \
+      --name /appserver/git-crypt-key \
+      --with-decryption \
+      --query Parameter.Value \
+      --output text \
+      --region "$region" \
+      | base64 -d > "$tmpkey" \
+      || die "Failed to fetch key from SSM. Do you have access to /appserver/git-crypt-key?"
+
+    git-crypt unlock "$tmpkey"
+    echo "Unlocked with key from SSM."
+  fi
+
+  echo
+  echo "Encrypted files now readable:"
+  git-crypt status | grep "encrypted:" || true
+}
+
+cmd_setup_lock() {
+  if ! command -v git-crypt &>/dev/null; then
+    die "git-crypt not found."
+  fi
+  git-crypt lock
+  echo "Locked — encrypted files are now opaque."
+}
+
+cmd_setup() {
+  case "${1:-}" in
+    unlock)  cmd_setup_unlock "${2:-}" ;;
+    lock)    cmd_setup_lock ;;
+    *)
+      echo "Usage: appserver setup {unlock [key-file]|lock}"
+      echo
+      echo "  unlock              Fetch key from SSM and decrypt pentest targets"
+      echo "  unlock <key-file>   Decrypt using a local key file"
+      echo "  lock                Re-encrypt files in working tree"
+      ;;
+  esac
+}
+
 # --- Main ---
 
 check_dependencies
@@ -1889,6 +1961,7 @@ case "${1:-}" in
   logs)     cmd_logs "${2:-}" ;;
   spend)    cmd_spend ;;
   threats)  shift; cmd_threats "$@" ;;
+  setup)    shift; cmd_setup "$@" ;;
   config)
     case "${2:-}" in
       push) cmd_config_push ;;
@@ -1944,5 +2017,9 @@ case "${1:-}" in
     echo "Config:"
     echo "  config push              Upload config to instance and restart Traefik"
     echo "  config check-ips [--fix] Audit Cloudflare IP ranges in traefik.yml"
+    echo
+    echo "Setup:"
+    echo "  setup unlock [key-file]  Decrypt pentest targets (fetches key from SSM)"
+    echo "  setup lock               Re-encrypt files in working tree"
     ;;
 esac

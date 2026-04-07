@@ -46,7 +46,21 @@ scripts/bootstrap.sh    # EC2 user_data (Docker, Traefik, cloudflared)
 ./scripts/appserver.sh threats block <ip>      # Block IP via Cloudflare WAF
 ./scripts/appserver.sh threats unblock <ip>    # Unblock IP
 ./scripts/appserver.sh threats blocked         # List blocked IPs
+./scripts/appserver.sh setup unlock            # Decrypt pentest targets (key from SSM)
+./scripts/appserver.sh setup lock              # Re-encrypt pentest targets
 ```
+
+## Developer Setup
+
+After cloning, decrypt the pentest target configs (requires AWS access to SSM):
+
+```bash
+./scripts/appserver.sh setup unlock            # Fetches key from SSM automatically
+# Or with a local key file:
+./scripts/appserver.sh setup unlock /path/to/appserver.key
+```
+
+Pentest target YAMLs (`pentest/targets/*.yaml`) are encrypted via git-crypt. They contain attack surface details, rate limits, and vulnerability history. The `.example` files are plain-text templates.
 
 ## Deploying Cookie (First Time)
 
