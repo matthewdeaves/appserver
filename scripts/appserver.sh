@@ -397,7 +397,7 @@ ensure_state_backend() {
               Condition: {
                 StringNotLike: {
                   "aws:PrincipalArn": [
-                    \($caller),
+                    $caller,
                     "arn:aws:iam::\($account):root"
                   ]
                 }

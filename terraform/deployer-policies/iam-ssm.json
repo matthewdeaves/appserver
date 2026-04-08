@@ -63,7 +63,10 @@
         "iam:TagPolicy",
         "iam:UntagPolicy"
       ],
-      "Resource": "arn:aws:iam::*:policy/Appserver*"
+      "Resource": [
+        "arn:aws:iam::*:policy/Appserver*",
+        "arn:aws:iam::*:policy/appserver-*"
+      ]
     },
     {
       "Sid": "SSMParameters",
