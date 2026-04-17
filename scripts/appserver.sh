@@ -355,12 +355,13 @@ ensure_state_backend() {
         BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true \
       || die "Failed to set public access block"
 
-    # State bucket policy: deny non-SSL + restrict access to deployer only (MED-1)
+    # State bucket policy: deny non-SSL + restrict access to deployer + admin (MED-1)
     local caller_arn
     caller_arn=$(aws sts get-caller-identity --query Arn --output text --region "$region") \
       || die "Failed to get caller ARN"
     local account_id
     account_id=$(aws sts get-caller-identity --query Account --output text --region "$region")
+    local deployer_arn="arn:aws:iam::${account_id}:user/appserver-deployer"
 
     aws s3api put-bucket-policy \
       --bucket "$bucket" \
@@ -368,6 +369,7 @@ ensure_state_backend() {
       --policy "$(jq -n \
         --arg bucket "$bucket" \
         --arg caller "$caller_arn" \
+        --arg deployer "$deployer_arn" \
         --arg account "$account_id" \
         '{
           Version: "2012-10-17",
@@ -398,6 +400,7 @@ ensure_state_backend() {
                 StringNotLike: {
                   "aws:PrincipalArn": [
                     $caller,
+                    $deployer,
                     "arn:aws:iam::\($account):root"
                   ]
                 }
