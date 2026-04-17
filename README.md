@@ -38,21 +38,42 @@ Client → Cloudflare → Tunnel → Traefik (:80) → App container
 
 ### Joining an existing deployment
 
-If the infrastructure is already running and you're setting up a new dev machine:
+If the infrastructure is already running and you're setting up a new dev machine, you'll need three secrets from your password vault:
+
+1. **AWS access key + secret** for the `appserver-deployer` IAM user (gives Terraform, SSM, and S3 state access)
+2. **Cloudflare API token** with Zone DNS Edit, Zone Settings Edit, Zone WAF Edit, Cloudflare Tunnel Edit, Zero Trust Edit
+3. **GitHub SSH key or PAT** to clone the repo
+
+Then:
 
 ```bash
 git clone git@github.com:matthewdeaves/appserver.git
 cd appserver
 
-# Configure AWS CLI with the appserver-deployer credentials (not root)
+# 1. AWS credentials for the deployer IAM user (not root)
 aws configure --profile appserver
-# Enter the appserver-deployer access key ID and secret access key
+# Paste the appserver-deployer access key ID and secret access key
 
-# Decrypt pentest target configs (fetches key from SSM automatically)
+# 2. Cloudflare API token — put it in terraform/.env (gitignored, per-machine)
+cp terraform/.env.example terraform/.env
+# Edit terraform/.env and replace the placeholder token.
+# Keep the `export` prefix — the CLI sources this file and the var needs to
+# reach Terraform/curl subprocesses.
+
+# 3. Decrypt pentest target configs (key is fetched from SSM automatically)
 ./scripts/appserver.sh setup unlock
+
+# Smoke test
+./scripts/appserver.sh status
 ```
 
 The CLI auto-detects the `appserver` AWS profile if configured. The deployer user has the minimum permissions needed — do not use root for day-to-day work.
+
+**Things to know about running from multiple machines:**
+
+- **Terraform state locking is not set up.** The S3 backend has no DynamoDB lock table, so two machines running `deploy` simultaneously can corrupt state. Coordinate manually, or add a lock table if this becomes a problem.
+- **The deployer key has a large blast radius** — full infra control plus Cookie admin via SSM. Scope vault access accordingly and rotate on a schedule.
+- **Consider one Cloudflare token per machine** rather than sharing one, so tokens can be revoked individually if a laptop is lost.
 
 ### Pentest target configs
 
