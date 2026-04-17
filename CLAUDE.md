@@ -13,6 +13,9 @@ terraform/              # All infrastructure (EC2, IAM, SG, tunnel, access, moni
 config/traefik/         # Traefik reverse proxy config + compose
 config/apps/            # Per-app Docker Compose files + env examples
 pentest/                # Penetration testing toolkit (invoke via /pentest skill)
+pentest/orchestrator/   # Python orchestrator — CLI, config, auth, module runner, results
+pentest/scripts/        # Bash module scripts (14 modules) + common.sh shared helpers
+pentest/hexstrike/      # HexStrike AI — agent-driven exploratory security testing (Docker)
 scripts/appserver.sh    # Admin CLI (init, deploy, status, app management)
 scripts/bootstrap.sh    # EC2 user_data (Docker, Traefik, cloudflared)
 .github/workflows/      # CI — terraform fmt, validate, shellcheck, gitleaks
@@ -52,15 +55,26 @@ scripts/bootstrap.sh    # EC2 user_data (Docker, Traefik, cloudflared)
 
 ## Developer Setup
 
-After cloning, decrypt the pentest target configs (requires AWS access to SSM):
+Secrets needed from the password vault: AWS deployer access key/secret, Cloudflare API token, GitHub SSH key.
 
 ```bash
+# AWS credentials for the appserver-deployer user
+aws configure --profile appserver
+
+# Cloudflare API token — terraform/.env is gitignored, per-machine
+cp terraform/.env.example terraform/.env   # then edit with the real token
+# Keep the `export` prefix in the file — load_env() sources it and the var
+# must be exported for Terraform/curl subprocesses.
+
+# Decrypt pentest target configs (requires AWS access to SSM)
 ./scripts/appserver.sh setup unlock            # Fetches key from SSM automatically
 # Or with a local key file:
 ./scripts/appserver.sh setup unlock /path/to/appserver.key
 ```
 
 Pentest target YAMLs (`pentest/targets/*.yaml`) are encrypted via git-crypt. They contain attack surface details, rate limits, and vulnerability history. The `.example` files are plain-text templates.
+
+Multi-machine gotchas: no Terraform state locking (S3 backend has no DynamoDB lock table — don't run `deploy` from two machines at once), deployer key has full infra + Cookie admin blast radius, prefer one Cloudflare token per machine for individual revocability.
 
 ## Deploying Cookie (First Time)
 
@@ -154,7 +168,11 @@ shellcheck scripts/*.sh                             # Shell script linting
 
 ## Penetration Testing
 
-The `pentest/` directory contains a bash-based security testing toolkit. Invoke via the `/pentest` skill.
+Two complementary approaches: a **curated pentest suite** for deterministic regression testing and **HexStrike AI** for agent-driven exploratory testing.
+
+### Curated Suite
+
+The `pentest/` directory contains a Python-orchestrated security testing toolkit with bash module scripts. Invoke via the `/pentest` skill.
 
 ```bash
 ./pentest/pentest.sh run cookie              # Full app-layer scan
@@ -166,7 +184,9 @@ The `pentest/` directory contains a bash-based security testing toolkit. Invoke 
 ./pentest/pentest.sh report cookie           # Show latest report
 ```
 
-### Important Notes
+**Architecture**: `pentest.sh` is a thin bash wrapper (~90 lines) that handles sudo, CF Access curl injection, and terraform init, then delegates to a Python orchestrator (`pentest/orchestrator/`). The orchestrator handles CLI parsing, target YAML loading, SSM auth bootstrap, module execution, tag counting, results.json assembly, and report generation. Module scripts (14 bash files in `pentest/scripts/`) are the actual test logic — they source `common.sh` for shared helpers (`setup_csrf`, `setup_sleep`, `url_encode`, `json_get`).
+
+#### Important Notes
 
 - Tests hit the live production site through Cloudflare — allowlist your IP in CF WAF before scanning
 - Run `pentest/install.sh` once to install tools (nmap, ffuf, nuclei, testssl.sh, wordlists)
@@ -177,6 +197,22 @@ The `pentest/` directory contains a bash-based security testing toolkit. Invoke 
 - The `appserver` target auto-skips app-layer modules; use the `cookie` target for app testing
 - Report directory structure: `reports/<target>/<timestamp>/` with `results.json` (machine-readable), `SUMMARY.md` (human-readable), `run.log` (full transcript), `modules/` (per-module output), `tools/` (tool artifacts)
 - Use `/pentest-review` skill to review scan results; it prefers `results.json` for quick structured triage
+- Module scripts source `pentest/scripts/common.sh` for shared CSRF setup, sleep derivation, and payload loading
+- The orchestrator exports `HOSTNAME`, `API_BASE`, `TARGET_URL`, auth session IDs, and other env vars to module subprocesses
+
+### HexStrike AI (Exploratory)
+
+`pentest/hexstrike/` contains a Dockerized HexStrike AI instance for agent-driven exploratory testing. It runs in its own container (Kali base + web-pentest tools) and is accessed via MCP — no coupling to the curated suite.
+
+```bash
+cd pentest/hexstrike && docker compose up -d   # Start HexStrike container
+# Configure MCP in Claude Code using mcp-config.example.json
+# Scope briefs in briefs/cookie.md and briefs/appserver.md
+```
+
+- Localhost-only (:8888), NET_RAW/NET_ADMIN caps for network tools
+- Does not invoke pentest.sh, the orchestrator, or module scripts
+- Briefs are plain-text scope summaries (not derived from encrypted target YAMLs)
 
 ## Security Reviews
 
