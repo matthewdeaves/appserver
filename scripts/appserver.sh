@@ -868,10 +868,12 @@ cmd_ssh() {
 }
 
 cmd_logs() {
-  local app="${1:-}"
-  if [[ -n "$app" ]]; then
-    [[ "$app" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "Invalid app name: $app"
-    ssm_run "cd /opt/appserver/apps/$app && docker compose logs --tail=100 2>&1" 60 || return 1
+  local target="${1:-}"
+  if [[ "$target" == "bootstrap" ]]; then
+    ssm_run "tail -n 200 /var/log/appserver-bootstrap.log 2>/dev/null || echo 'No bootstrap log found at /var/log/appserver-bootstrap.log'" 60 || return 1
+  elif [[ -n "$target" ]]; then
+    [[ "$target" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "Invalid app name: $target"
+    ssm_run "cd /opt/appserver/apps/$target && docker compose logs --tail=100 2>&1" 60 || return 1
   else
     ssm_run "echo '=== Traefik ===' && docker logs --tail=30 traefik 2>&1 && for d in /opt/appserver/apps/*/; do [ -d \"\$d\" ] || continue; app=\$(basename \"\$d\"); echo && echo \"=== \$app ===\"; cd \"\$d\" && docker compose logs --tail=20 2>&1; done" 60 || return 1
   fi
@@ -1998,7 +2000,7 @@ case "${1:-}" in
     echo "  start         Start EC2 instance"
     echo "  stop          Stop EC2 instance"
     echo "  ssh           SSM session to instance"
-    echo "  logs [app]    Stream container logs"
+    echo "  logs [app|bootstrap]  Container logs, or bootstrap for /var/log/appserver-bootstrap.log"
     echo "  spend         AWS cost breakdown"
     echo
     echo "Apps:"

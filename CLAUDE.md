@@ -31,7 +31,7 @@ scripts/bootstrap.sh    # EC2 user_data (Docker, Traefik, cloudflared)
 ./scripts/appserver.sh start         # Start EC2 instance
 ./scripts/appserver.sh stop          # Stop EC2 instance
 ./scripts/appserver.sh ssh           # SSM session to instance
-./scripts/appserver.sh logs [app]    # Container logs
+./scripts/appserver.sh logs [app|bootstrap]  # Container logs, or bootstrap for /var/log/appserver-bootstrap.log
 ./scripts/appserver.sh spend         # AWS cost breakdown
 ./scripts/appserver.sh app init <name>     # Generate secrets + create .env on instance
 ./scripts/appserver.sh app deploy <name>   # Pull image + restart app
