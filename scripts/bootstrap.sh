@@ -92,11 +92,11 @@ useradd -r -s /sbin/nologin cloudflared 2>/dev/null || true
 
 # Get tunnel token from SSM. IAM role + policy + parameter are all created in the same
 # terraform apply as the instance, and the instance can boot before global IAM propagation
-# completes. 12 attempts x 15s = 180s covers the tail of real-world IAM propagation delay.
+# completes. 6 attempts x 30s = 180s covers the tail of real-world IAM propagation delay.
 echo "Fetching tunnel token from SSM..."
 TUNNEL_TOKEN=""
 ssm_err=""
-for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+for attempt in 1 2 3 4 5 6; do
   if ssm_err=$(aws ssm get-parameter \
       --name "$TUNNEL_TOKEN_SSM" \
       --with-decryption \
@@ -107,9 +107,9 @@ for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
     break
   fi
   echo "  Attempt $attempt failed: $ssm_err"
-  sleep 15
+  sleep 30
 done
-[[ -n "$TUNNEL_TOKEN" ]] || die "Failed to get tunnel token from SSM after 12 attempts: $ssm_err"
+[[ -n "$TUNNEL_TOKEN" ]] || die "Failed to get tunnel token from SSM after 6 attempts: $ssm_err"
 
 # Cloudflared environment file
 mkdir -p /etc/cloudflared
