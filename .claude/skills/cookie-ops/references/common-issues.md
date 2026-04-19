@@ -42,11 +42,11 @@ Symptom-to-cause mappings for Cookie app issues. For infrastructure-level issues
 
 ## Cron Jobs Not Firing
 
-**Symptoms:** `maintenance.*.last_run` shows "never" in `cookie_admin status --json` for longer than the job's schedule
+**Symptoms:** `maintenance.<job>` in `cookie_admin status --json` is the literal string `"never run"` for longer than the job's schedule. (After a successful run the value becomes an object with a `time` key, e.g. `{"time": "2026-04-18T11:00:02Z", "deleted": 0, ...}`.) Keys are `device_code_cleanup`, `session_cleanup`, `search_image_cleanup`.
 
 **Causes:**
 1. Cron daemon not running — check `docker exec cookie-web pgrep -a cron`
-2. Crontab missing — check `docker exec cookie-web cat /etc/cron.d/cookie-cron`
+2. Crontab missing — check `docker exec cookie-web cat /etc/cron.d/cookie-cleanup`
 3. Container restarted recently — cron jobs haven't hit their next schedule yet (normal after deploy)
 
 **Fix:** If cron process is missing, this is a Cookie image bug (entrypoint issue). Roll back to a known-good version.

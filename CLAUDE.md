@@ -83,9 +83,11 @@ Multi-machine gotchas: no Terraform state locking (S3 backend has no DynamoDB lo
 ./scripts/appserver.sh app init cookie     # Auto-generate all secrets
 ./scripts/appserver.sh app deploy cookie   # Pull image + start
 # Visit https://cookie.matthewdeaves.com
-# Register your first passkey, then promote to admin:
+# Register your first passkey. v1.43.0+: there is no admin tier — all users are peers.
+# Mode-gated ops (reset, API key, prompts, sources, quotas) run via cookie_admin CLI:
 # docker exec cookie-web python manage.py cookie_admin list-users --json
-# docker exec cookie-web python manage.py cookie_admin promote <username> --json
+# docker exec cookie-web python manage.py cookie_admin reset --confirm --json     # factory reset
+# docker exec cookie-web python manage.py cookie_admin set-unlimited <user> --json # AI-quota exemption
 ```
 
 `app init` auto-generates cryptographically random values for:
@@ -160,10 +162,13 @@ shellcheck scripts/*.sh                             # Shell script linting
 - SSM commands use `jq` for safe JSON encoding (no string interpolation injection)
 - `app env` masks values when displaying (shows KEY=***) and validates KEY=VALUE format
 - Bootstrap retries tunnel token fetch 5 times with 10s backoff
-- Django `createsuperuser` is blocked — use `cookie_admin promote` instead
+- Django `createsuperuser` is blocked. v1.43.0: no admin tier — use `cookie_admin set-unlimited` for per-user AI-quota exemption, or run admin-style ops via CLI subcommands directly
 - Device code flow allows legacy devices without WebAuthn support to pair via 6-char codes
 - Cookie v1.13.0+ has built-in cron jobs: `cleanup_device_codes` (hourly), `cleanup_sessions` (daily 3:15 AM), `cleanup_search_images` (daily 3:30 AM)
-- `python manage.py cookie_admin status --json` includes `maintenance` block with last-run timestamps for each cron job and `device_codes` counts (pending/stale)
+- `python manage.py cookie_admin status --json` includes `maintenance` block keyed by `device_code_cleanup` / `session_cleanup` / `search_image_cleanup` — each value is either the string `"never run"` or an object with `time` and job-specific counters; also `device_codes` counts (pending/stale)
+- Running cookie version is NOT in `status --json` (removed v1.42.0 as fingerprint fix) — get it via `docker ps --filter name=cookie-web --format '{{.Image}}'`
+- Cookie v1.42.0+ gates admin UI by auth mode: passkey mode hides API-key/model/prompts/sources/quota/danger-zone sections in both legacy and SPA frontends; those settings are CLI-only via `cookie_admin`. Subcommands: `set-api-key`, `test-api-key`, `set-default-model`, `prompts {list,show,set}`, `sources {list,toggle,toggle-all,set-selector,test,repair}`, `quota {show,set}`, `rename`. Home mode keeps the full web admin UI
+- Cookie v1.43.0 retired `is_staff` and removed the `AdminAuth` class. `HomeOnlyAdminAuth` renamed to `HomeOnlyAuth` (mode gate only, no privilege check). cookie_admin `promote`/`demote` subcommands removed; `--admin` flag removed from `create-user`; `--admins-only` flag removed from `list-users`; `is_admin` field stripped from `status`, `list-users`, `audit` JSON and from `/auth/me` response. Per-user privilege is now only `Profile.unlimited_ai` (set via `cookie_admin set-unlimited`/`remove-unlimited`)
 - Cron output is redirected to container stdout (`/proc/1/fd/1`) so it appears in `docker logs`
 
 ## Penetration Testing

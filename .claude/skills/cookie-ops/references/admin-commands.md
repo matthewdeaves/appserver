@@ -25,20 +25,24 @@ aws ssm get-command-invocation \
 
 ## First-Time Setup (New Deployment)
 
-After the first user registers via passkey, they have no admin privileges.
-Promote them via SSM:
+**v1.43.0: there is no admin tier anymore.** `is_staff` was retired; the `promote` / `demote` subcommands are gone. In passkey mode all authenticated users are peers; admin-only operations run via the CLI itself (e.g. `cookie_admin reset`, `cookie_admin set-api-key`, `cookie_admin prompts set`).
+
+Privilege that remains is `Profile.unlimited_ai` — grants AI-quota exemption only. Set it with:
 
 ```bash
-docker exec cookie-web python manage.py cookie_admin list-users --json
-# Find the username (pk_XXXXXXXX format)
-docker exec cookie-web python manage.py cookie_admin promote pk_XXXXXXXX --json
+docker exec cookie-web python manage.py cookie_admin set-unlimited USERNAME --json
+docker exec cookie-web python manage.py cookie_admin remove-unlimited USERNAME --json
 ```
-
-This is the ONLY way to grant admin access. There is no auto-promotion.
 
 ## cookie_admin Subcommands
 
 All support `--json` for structured output. Always use `--json` when running via SSM.
+
+**Mode gating (v1.42.0+):** User-lifecycle subcommands (`create-user`, `delete-user`, `activate`, `deactivate`, `create-session`) require `AUTH_MODE=passkey`. Other subcommands work in either mode. The CLI returns an error if you invoke a passkey-only subcommand in home mode.
+
+**v1.43.0 deletions:** `promote`, `demote` subcommands removed. `--admin` flag on `create-user` removed. `--admins-only` flag on `list-users` removed. `is_admin` field removed from `status`, `list-users`, and `audit` JSON output (replaced with `unlimited_ai`).
+
+**Running version:** `status --json` does NOT include the running version (removed in v1.42.0 as a fingerprinting fix). Get it via `docker ps --filter name=cookie-web --format '{{.Image}}'`.
 
 ### status
 
@@ -51,20 +55,23 @@ Returns:
 {
   "ok": true,
   "auth_mode": "passkey",
-  "database": "connected",
+  "database": "ok",
   "migrations": "up to date",
-  "users": {"total": 2, "active": 2, "admins": 1},
+  "users": {"total": 2, "active": 2},
   "passkeys": 2,
   "device_codes": {"pending": 0, "stale_expired": 0},
   "openrouter": {"configured": true, "source": "env", "model": "anthropic/claude-haiku-4.5"},
   "webauthn": {"rp_id": "matthewdeaves.com", "rp_name": "Cookie"},
   "maintenance": {
-    "cleanup_device_codes": {"last_run": "2026-03-29T08:00:00Z", "schedule": "hourly"},
-    "cleanup_sessions": {"last_run": "2026-03-29T03:15:00Z", "schedule": "daily 3:15 AM"},
-    "cleanup_search_images": {"last_run": "2026-03-29T03:30:00Z", "schedule": "daily 3:30 AM"}
-  }
+    "device_code_cleanup": {"time": "2026-04-18T11:00:02Z", "deleted": 0, "remaining": 0, "expired": 0, "invalidated": 0, "consumed": 0},
+    "session_cleanup": "never run",
+    "search_image_cleanup": "never run"
+  },
+  "cache": {"status": "healthy", "cache_stats": {"total": 0, "success": 0, "pending": 0, "failed": 0, "success_rate": "N/A"}}
 }
 ```
+
+Each `maintenance.<job>` is either the literal string `"never run"` (cron hasn't fired yet) or an object with `time` plus job-specific counters.
 
 **Best single diagnostic command.** Covers DB, migrations, auth, users, device codes, cron health, and AI config.
 
@@ -83,41 +90,34 @@ Each event includes timestamp, type, username/credential ID, and relevant metada
 
 ```bash
 docker exec cookie-web python manage.py cookie_admin list-users --json
-# Optional: --active-only, --admins-only
+# Optional: --active-only
 ```
 
-Returns all user accounts with activity status.
+Returns all user accounts with activity status. Each entry includes `username`, `user_id`, `passkeys`, `is_active`, `unlimited_ai`, `date_joined` (v1.43.0: `is_admin` removed).
 
 ### Create / Delete Users
 
 ```bash
-# Create a regular user (no passkey, headless — for testing/automation)
+# Create a user (no passkey, headless — for testing/automation)
 docker exec cookie-web python manage.py cookie_admin create-user USERNAME --json
-
-# Create an admin user
-docker exec cookie-web python manage.py cookie_admin create-user USERNAME --admin --json
 
 # Delete a user and all associated data (profile, sessions, etc.)
 docker exec cookie-web python manage.py cookie_admin delete-user USERNAME --json
 ```
 
-Users created via `create-user` have no passkey and an unusable password — they can only be accessed via `create-session`. The pentest bootstrap uses this to create a `pentest_user` for regular-user testing, then deletes it after the run.
+v1.43.0: the `--admin` flag was removed from `create-user`. All users are created non-privileged; there is no admin tier at the account level. Users created via `create-user` have no passkey and an unusable password — they can only be accessed via `create-session`. The pentest bootstrap uses this to create test users, then deletes them after the run.
 
-### User Management
+### User Activation
 
 ```bash
-# Promote to admin
-docker exec cookie-web python manage.py cookie_admin promote USERNAME --json
-
-# Demote from admin
-docker exec cookie-web python manage.py cookie_admin demote USERNAME --json
-
 # Deactivate account
 docker exec cookie-web python manage.py cookie_admin deactivate USERNAME --json
 
 # Reactivate account
 docker exec cookie-web python manage.py cookie_admin activate USERNAME --json
 ```
+
+v1.43.0: `promote` / `demote` removed (is_staff retired). Grant AI-quota exemption via `set-unlimited` below — that is the only per-user privilege that remains.
 
 ### AI Quota Management
 
@@ -145,6 +145,91 @@ docker exec cookie-web python manage.py cookie_admin create-session USERNAME --j
 Creates a Django session for the specified user without WebAuthn authentication.
 Returns the session key for use in automated testing (e.g., pentest SSRF tests).
 Session is short-lived (default 1 hour) and logged to the security logger.
+
+### Factory reset
+
+```bash
+docker exec cookie-web python manage.py cookie_admin reset --confirm --json
+```
+
+Deletes all user data and re-seeds defaults. `--confirm` is required when using `--json` (prevents accidental non-interactive data loss). This is the only way to factory-reset in passkey mode — the `/api/system/reset/` HTTP endpoint returns 404 (HomeOnlyAuth).
+
+### AI Configuration (v1.42.0+)
+
+In passkey mode the web UI for these settings is removed; CLI is the only way to change them. In home mode the web admin remains authoritative, but the CLI still works.
+
+```bash
+# Set the OpenRouter API key (prefer --stdin so the key never enters shell history)
+echo -n "$OPENROUTER_KEY" | docker exec -i cookie-web python manage.py cookie_admin set-api-key --stdin --json
+
+# Validate a key WITHOUT saving (tests the OpenRouter endpoint)
+echo -n "$OPENROUTER_KEY" | docker exec -i cookie-web python manage.py cookie_admin test-api-key --stdin --json
+
+# Set the default AI model id
+docker exec cookie-web python manage.py cookie_admin set-default-model anthropic/claude-haiku-4.5 --json
+```
+
+**API key precedence:** `OPENROUTER_API_KEY` env var (set in `.env`) wins over the DB-stored key. `status --json → openrouter.source` shows which one is active (`env`, `db`, or `none`).
+
+### AI Prompts (v1.42.0+)
+
+```bash
+# List all AI prompt types
+docker exec cookie-web python manage.py cookie_admin prompts list --json
+
+# Show one prompt by type
+docker exec cookie-web python manage.py cookie_admin prompts show PROMPT_TYPE --json
+
+# Update a prompt's fields (content is loaded from a file path)
+docker exec cookie-web python manage.py cookie_admin prompts set PROMPT_TYPE --content-file /path/to/prompt.txt --json
+```
+
+Use `prompts list --json` first to discover valid `PROMPT_TYPE` values. Content must come from a file (not inline) to keep large prompts out of shell history and argv.
+
+### Search Sources (v1.42.0+)
+
+```bash
+# List all search sources
+docker exec cookie-web python manage.py cookie_admin sources list --json
+
+# Toggle one source on/off
+docker exec cookie-web python manage.py cookie_admin sources toggle SOURCE_ID --json
+
+# Set every source's enabled state at once
+docker exec cookie-web python manage.py cookie_admin sources toggle-all --enabled true --json
+
+# Overwrite a source's CSS selector
+docker exec cookie-web python manage.py cookie_admin sources set-selector SOURCE_ID --selector '.recipe-body' --json
+
+# Health-check one source (or all)
+docker exec cookie-web python manage.py cookie_admin sources test [SOURCE_ID] --json
+
+# AI-assisted selector regeneration (requires OpenRouter API key)
+docker exec cookie-web python manage.py cookie_admin sources repair SOURCE_ID --json
+```
+
+### AI Quotas (v1.42.0+)
+
+```bash
+# Show all six daily limits (remix, remix_suggestions, scale, tips, discover, timer)
+docker exec cookie-web python manage.py cookie_admin quota show --json
+
+# Set one daily limit
+docker exec cookie-web python manage.py cookie_admin quota set FEATURE LIMIT --json
+# e.g.: quota set discover 50 --json
+```
+
+Use `set-unlimited USERNAME` / `remove-unlimited USERNAME` for per-user overrides on top of these global defaults.
+
+### Rename a profile (v1.42.0+)
+
+```bash
+# Passkey mode: target is user_id or username
+docker exec cookie-web python manage.py cookie_admin rename pk_XXXXXXXX --name "New Name" --json
+
+# Home mode: target is profile_id
+docker exec cookie-web python manage.py cookie_admin rename 42 --name "Family Cook" --json
+```
 
 ## Cleanup Commands
 

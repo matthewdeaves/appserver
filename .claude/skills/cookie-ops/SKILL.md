@@ -31,9 +31,18 @@ Input can be:
 |------|---------|
 | Deploy new version | Update version in `docker-compose.yml`, `config push`, `app deploy cookie` |
 | Check status | `python manage.py cookie_admin status --json` via SSM |
+| Running version | `docker ps --filter name=cookie-web --format '{{.Image}}'` (not in `status --json` since v1.42.0) |
 | View logs | `./scripts/appserver.sh logs cookie` |
 | Security audit | `python manage.py cookie_admin audit --json` via SSM |
 | List users | `python manage.py cookie_admin list-users --json` via SSM |
+| Set OpenRouter key | `cookie_admin set-api-key --stdin --json` via SSM (passkey-mode CLI-only) |
+| Set default model | `cookie_admin set-default-model MODEL_ID --json` via SSM |
+| Manage AI prompts | `cookie_admin prompts {list,show,set}` via SSM |
+| Manage search sources | `cookie_admin sources {list,toggle,test,repair,...}` via SSM |
+| Show/set AI quotas | `cookie_admin quota {show,set}` via SSM |
+| Rename a profile | `cookie_admin rename TARGET --name NEW_NAME` via SSM |
+| Grant AI exemption | `cookie_admin set-unlimited USERNAME --json` / `remove-unlimited USERNAME --json` via SSM |
+| Factory reset | `cookie_admin reset --confirm --json` via SSM (HTTP endpoint is 404 in passkey mode, HomeOnlyAuth) |
 | Run cleanup | `python manage.py cleanup_device_codes` / `cleanup_sessions` / `cleanup_search_images` via SSM |
 
 ## Workflow
@@ -86,8 +95,10 @@ Delegate to the infrastructure skill when the issue is:
 - **`python manage.py cookie_admin status --json` is the single best diagnostic.** It covers DB, migrations, auth config, user counts, device code state, cron job health, and AI config in one call.
 - **Entrypoint errors may be swallowed.** DB wait loops pipe through `2>/dev/null`. If logs just show "Waiting for database..." but DB is healthy, test the check command manually with `docker exec`.
 - **Passkeys need correct RP ID.** `WEBAUTHN_RP_ID` must be `matthewdeaves.com` (parent domain). Check `cookie_admin status --json` → `webauthn.rp_id`.
-- **No auto-admin.** All users register as non-admin. Promote the first user via CLI: `cookie_admin promote <username>`.
+- **No admin tier (v1.43.0).** `is_staff`, `AdminAuth`, and the `promote` / `demote` subcommands are gone. All authenticated users are peers. Mode-gated operations (admin-style settings, factory reset, prompts, sources, quotas) run via `cookie_admin` CLI in passkey mode, or via the home-mode web admin UI. Per-user privilege that remains is `Profile.unlimited_ai` (AI-quota exemption) via `cookie_admin set-unlimited` / `remove-unlimited`.
 - **`SECURE_SSL_REDIRECT` must be false behind proxy.** Cookie v1.22.1+ defaults to `false`. Cloudflare handles HTTPS at the edge; enabling this in Django causes infinite 301 redirect loops.
+- **Admin UI is passkey-mode gated (v1.42.0+).** In passkey mode, the web admin sections for API key, default model, prompts, sources, AI quotas, and danger-zone reset are invisible in both the legacy and SPA frontends. Change these via `cookie_admin` CLI only. Home mode retains the full web admin UI.
+- **Running version is NOT in `status --json` (v1.42.0+).** The `/api/system/mode/` endpoint no longer exposes version either (fingerprint fix). Read it from the image tag: `docker ps --filter name=cookie-web --format '{{.Image}}'`.
 
 ## Report Format
 

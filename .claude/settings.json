@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/pentest-bash-gotchas.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/pentest-bash-gotchas.sh"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/pentest-shellcheck.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/pentest-shellcheck.sh"
           }
         ]
       }
