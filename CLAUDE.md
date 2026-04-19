@@ -67,7 +67,7 @@ Three scenarios — pick one based on AWS account state (see README for the full
 
 Secrets needed for B/C (from the password vault or Cloudflare/AWS console):
 - AWS deployer access key/secret for the `appserver-deployer` IAM user
-- Cloudflare API token (Zone DNS/Settings/WAF Edit, Account Tunnel Edit, Account Zero Trust Edit)
+- Cloudflare API token (Zone DNS/Settings/WAF/DNSSEC Edit, Account Tunnel Edit, Account Zero Trust Edit)
 - Cloudflare zone ID + account ID for the domain (not secrets, but `setup local` prompts for them)
 - GitHub SSH key
 
@@ -158,7 +158,7 @@ shellcheck scripts/*.sh                             # Shell script linting
 - Same AWS account as Rockport — resources isolated by naming/tagging (appserver-*)
 - App secrets (.env files) are NOT uploaded via artifacts — use `app init` to generate or `app env` to set
 - Region is read from `terraform.tfvars` by appserver.sh — no hardcoded region
-- Cloudflare API token needs: Zone DNS Edit, Zone Settings Edit, Zone WAF Edit, Account Cloudflare Tunnel Edit, Account Zero Trust Edit
+- Cloudflare API token needs: Zone DNS Edit, Zone Settings Edit, Zone WAF Edit, Zone DNSSEC Edit, Account Cloudflare Tunnel Edit, Account Zero Trust Edit
 - The CLI requires `aws`, `terraform`, and `jq`
 - `deploy` runs terraform apply, then uploads artifacts to S3
 - `app deploy` pulls artifacts + latest Docker image, then restarts the compose stack

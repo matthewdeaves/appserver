@@ -32,3 +32,16 @@ output "cf_access_client_secret" {
   value       = cloudflare_zero_trust_access_service_token.appserver.client_secret
   sensitive   = true
 }
+
+# Paste this DS record at the domain registrar to complete DNSSEC activation.
+# Until it's pasted, the zone-level DNSSEC resource is inert — resolvers ignore it.
+output "dnssec_ds_record" {
+  description = "DS record to paste at the registrar to activate DNSSEC"
+  value = {
+    algorithm   = cloudflare_zone_dnssec.this.algorithm
+    key_tag     = cloudflare_zone_dnssec.this.key_tag
+    digest_type = cloudflare_zone_dnssec.this.digest_type
+    digest      = cloudflare_zone_dnssec.this.digest
+    ds          = cloudflare_zone_dnssec.this.ds
+  }
+}

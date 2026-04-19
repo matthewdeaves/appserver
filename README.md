@@ -23,7 +23,7 @@ Client → Cloudflare → Tunnel → Traefik (:80) → App container
 - Terraform
 - jq
 - git-crypt (for pentest target configs)
-- Cloudflare API token with: Zone DNS Edit, Zone Settings Edit, Zone WAF Edit, Cloudflare Tunnel Edit, Zero Trust Edit
+- Cloudflare API token with: Zone DNS Edit, Zone Settings Edit, Zone WAF Edit, Zone DNSSEC Edit, Cloudflare Tunnel Edit, Zero Trust Edit
 
 ## Getting Started
 
@@ -51,7 +51,7 @@ Use this only when bootstrapping from an empty AWS account (no `appserver-deploy
 Use these when the deployer IAM user and state bucket already exist (i.e. someone has run `init` at some point). You'll need:
 
 1. **AWS access key + secret** for the `appserver-deployer` IAM user
-2. **Cloudflare API token** (Zone DNS Edit, Zone Settings Edit, Zone WAF Edit, Cloudflare Tunnel Edit, Zero Trust Edit) — plus the **zone ID** and **account ID** for your domain (visible on the Cloudflare dashboard)
+2. **Cloudflare API token** (Zone DNS Edit, Zone Settings Edit, Zone WAF Edit, Zone DNSSEC Edit, Cloudflare Tunnel Edit, Zero Trust Edit) — plus the **zone ID** and **account ID** for your domain (visible on the Cloudflare dashboard)
 3. **GitHub SSH key** to clone the repo
 
 Configure the machine:
