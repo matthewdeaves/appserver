@@ -27,47 +27,61 @@ Client → Cloudflare → Tunnel → Traefik (:80) → App container
 
 ## Getting Started
 
-### First-time infrastructure setup
+Your path depends on what already exists in the target AWS account. The three common cases:
+
+| Scenario | What exists in AWS | What you run |
+|----------|--------------------|--------------|
+| A. Brand-new AWS account | Nothing | `init` → `deploy` → `app init cookie` → `app deploy cookie` |
+| B. Joining live infra on a new dev machine | Deployer IAM + state bucket + running EC2 | `aws configure --profile appserver` + `setup local` → `status` |
+| C. Rebuilding after a destroy | Deployer IAM + state bucket, but no live infra | `aws configure --profile appserver` + `setup local` → `deploy` → `app init cookie` → `app deploy cookie` |
+
+### A. Brand-new AWS account
+
+Use this only when bootstrapping from an empty AWS account (no `appserver-deployer` IAM user, no state bucket). Requires **admin AWS credentials** on your local default credential chain — the deployer user can't create its own IAM policies.
 
 ```bash
-./scripts/appserver.sh init              # Interactive setup (IAM, state bucket, tfvars)
-./scripts/appserver.sh deploy            # Provision infrastructure
-./scripts/appserver.sh app init cookie   # Generate secrets on instance
-./scripts/appserver.sh app deploy cookie # Pull image + start
+./scripts/appserver.sh init              # Creates IAM + state bucket, prompts for CF config
+./scripts/appserver.sh deploy            # Provisions EC2 + Cloudflare Tunnel + DNS + Access
+./scripts/appserver.sh app init cookie   # Generates Cookie secrets on the instance
+./scripts/appserver.sh app deploy cookie # Pulls image + starts the compose stack
 ```
 
-### Joining an existing deployment
+### B + C. Existing AWS account (most common)
 
-If the infrastructure is already running and you're setting up a new dev machine, you'll need three secrets from your password vault:
+Use these when the deployer IAM user and state bucket already exist (i.e. someone has run `init` at some point). You'll need:
 
-1. **AWS access key + secret** for the `appserver-deployer` IAM user (gives Terraform, SSM, and S3 state access)
-2. **Cloudflare API token** with Zone DNS Edit, Zone Settings Edit, Zone WAF Edit, Cloudflare Tunnel Edit, Zero Trust Edit
-3. **GitHub SSH key or PAT** to clone the repo
+1. **AWS access key + secret** for the `appserver-deployer` IAM user
+2. **Cloudflare API token** (Zone DNS Edit, Zone Settings Edit, Zone WAF Edit, Cloudflare Tunnel Edit, Zero Trust Edit) — plus the **zone ID** and **account ID** for your domain (visible on the Cloudflare dashboard)
+3. **GitHub SSH key** to clone the repo
 
-Then:
+Configure the machine:
 
 ```bash
 git clone git@github.com:matthewdeaves/appserver.git
 cd appserver
 
-# 1. AWS credentials for the deployer IAM user (not root)
-aws configure --profile appserver
-# Paste the appserver-deployer access key ID and secret access key
-
-# 2. Cloudflare API token — put it in terraform/.env (gitignored, per-machine)
-cp terraform/.env.example terraform/.env
-# Edit terraform/.env and replace the placeholder token.
-# Keep the `export` prefix — the CLI sources this file and the var needs to
-# reach Terraform/curl subprocesses.
-
-# 3. Decrypt pentest target configs (key is fetched from SSM automatically)
-./scripts/appserver.sh setup unlock
-
-# Smoke test
-./scripts/appserver.sh status
+aws configure --profile appserver        # Paste deployer access key + secret, region (eu-west-2), json
+./scripts/appserver.sh setup local       # Interactive prompts → writes terraform/.env + tfvars (no AWS admin)
 ```
 
+Check whether live infra exists:
+
+```bash
+./scripts/appserver.sh status            # Shows running containers, or "Could not reach instance"
+```
+
+- **Scenario B** — `status` shows containers running (Traefik, cloudflared, app). You're done. Use `app deploy cookie` later to ship new Cookie versions.
+- **Scenario C** — `status` errors because there's no instance. Rebuild infra:
+
+  ```bash
+  ./scripts/appserver.sh deploy            # Re-provisions EC2 + CF resources
+  ./scripts/appserver.sh app init cookie   # Re-generates Cookie secrets on the instance
+  ./scripts/appserver.sh app deploy cookie # Re-pulls image + starts
+  ```
+
 The CLI auto-detects the `appserver` AWS profile if configured. The deployer user has the minimum permissions needed — do not use root for day-to-day work.
+
+**When to run `init`:** only for scenario A, or if a previous `destroy` was run with the "also remove bootstrap" option (which deletes the deployer IAM user + state bucket). `init` is idempotent but requires admin credentials, so it can't run from the `appserver` profile.
 
 **Things to know about running from multiple machines:**
 
@@ -86,7 +100,7 @@ Pentest target YAMLs (`pentest/targets/*.yaml`) are encrypted via git-crypt. The
 ## CLI Reference
 
 ```
-appserver.sh init                  Interactive first-time setup
+appserver.sh init                  Bootstrap AWS infra (IAM + state bucket, admin creds)
 appserver.sh deploy                Terraform apply + upload config to S3
 appserver.sh destroy               Terraform destroy + optional cleanup
 appserver.sh status                Running containers + resource usage
@@ -105,12 +119,15 @@ appserver.sh app env <name>        View/set environment variables
 appserver.sh config push           Push config + restart Traefik
 appserver.sh config check-ips      Audit Cloudflare IP ranges in traefik.yml
 
+appserver.sh setup local           Write terraform/.env + tfvars (for existing infra)
 appserver.sh setup unlock          Decrypt pentest targets (key from SSM)
 appserver.sh setup lock            Re-encrypt pentest targets
 
 appserver.sh threats               Analyze access logs for threats (last 24h)
 appserver.sh threats block <ip>    Block IP via Cloudflare WAF
 appserver.sh threats blocked       List blocked IPs
+appserver.sh threats allow [<ip>]  Allowlist IP in CF WAF (defaults to public IP; for pentests)
+appserver.sh threats allowed       List allowlisted IPs
 ```
 
 ## Adding an App

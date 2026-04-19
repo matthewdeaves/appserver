@@ -7,11 +7,11 @@ How appserver's two-tier IAM model works and which profile to use for what.
 ### Deployer Profile (`AWS_PROFILE=appserver`)
 - **Used for:** All routine operations (diagnostics, deploy, app management, config push, spend)
 - **User:** `appserver-deployer` IAM user
-- **Created by:** `appserver.sh init`
+- **Created by:** `appserver.sh init` (new AWS account) — on a fresh dev machine with existing infra, run `appserver.sh setup local` instead (writes local config only, no IAM changes)
 - **Policies:** 3 deployer policies (compute, iam-ssm, monitoring-storage)
 
 ### Admin Profile (default / no AWS_PROFILE)
-- **Used for:** Bootstrap only (`appserver.sh init`)
+- **Used for:** Infrastructure bootstrap only (`appserver.sh init`) — creates IAM policies, deployer user, and state bucket
 - **User:** `rockport-admin` (shared admin user across projects)
 - **Policy:** `AppserverAdmin` (auto-created by init)
 
@@ -35,7 +35,7 @@ Only when the issue involves:
 - Creating or modifying IAM policies
 - Creating or modifying IAM users
 - Managing the state bucket
-- First-time setup (`appserver.sh init`)
+- First-time infrastructure bootstrap (`appserver.sh init`) — creates deployer user, policies, state bucket
 
 **To escalate:** Unset the deployer profile:
 ```bash

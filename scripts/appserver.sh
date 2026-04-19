@@ -518,9 +518,11 @@ package_and_upload_artifact() {
 # --- Subcommands ---
 
 cmd_init() {
-  # init manages IAM policies that require admin permissions.
-  # If the auto-profile selected the deployer, unset it so we fall back
-  # to the default/admin credentials.
+  # init bootstraps the AWS infrastructure prerequisites (IAM policies,
+  # deployer user + access keys, state bucket). It requires admin-level AWS
+  # credentials — the deployer user cannot create its own policies. If the
+  # deployer profile is active, unset it so the default credential chain
+  # resolves admin credentials instead.
   if [[ "${AWS_PROFILE:-}" == "appserver" ]]; then
     unset AWS_PROFILE
   fi
@@ -529,95 +531,23 @@ cmd_init() {
   echo "==============="
   echo
 
-  for cmd in aws terraform; do
-    if ! command -v "$cmd" &>/dev/null; then
-      echo "ERROR: $cmd not found."
-      exit 1
-    fi
-  done
-
   if [[ -f "$TERRAFORM_DIR/terraform.tfvars" ]]; then
     echo "Existing terraform.tfvars found."
     read -rp "Overwrite? [y/N]: " overwrite
-    if [[ "$overwrite" != [yY] ]]; then
-      load_env
-      local region
-      region="$(get_region)"
-
-      echo
-      echo "Checking prerequisites..."
-      ensure_deployer_access
-      ensure_state_backend
-      echo "  Config ............... ok (using existing terraform.tfvars)"
-
-      echo
-      echo "All prerequisites met. Run: ./scripts/appserver.sh deploy"
-      return 0
+    if [[ "$overwrite" == [yY] ]]; then
+      cmd_setup_local --force
     fi
+  else
+    cmd_setup_local
   fi
 
-  read -rp "AWS region [eu-west-2]: " region
-  region="${region:-eu-west-2}"
-  if [[ ! "$region" =~ ^[a-z]{2}-[a-z]+-[0-9]+$ ]]; then
-    echo "ERROR: Invalid AWS region format: $region"; exit 1
-  fi
+  [[ -f "$TERRAFORM_DIR/terraform.tfvars" ]] \
+    || die "terraform.tfvars missing. Run: ./scripts/appserver.sh setup local"
 
-  read -rp "Base domain (e.g. matthewdeaves.com): " domain
-  [[ -z "$domain" ]] && { echo "Domain is required."; exit 1; }
-  if [[ ! "$domain" =~ ^[a-z0-9][a-z0-9.-]+\.[a-z]{2,}$ ]]; then
-    echo "ERROR: Invalid domain format: $domain"; exit 1
-  fi
-
-  read -rp "Cloudflare Zone ID: " cf_zone_id
-  [[ -z "$cf_zone_id" ]] && { echo "Zone ID is required."; exit 1; }
-  if [[ ! "$cf_zone_id" =~ ^[0-9a-f]{32}$ ]]; then
-    echo "ERROR: Zone ID must be a 32-character hex string"; exit 1
-  fi
-
-  read -rp "Cloudflare Account ID: " cf_account_id
-  [[ -z "$cf_account_id" ]] && { echo "Account ID is required."; exit 1; }
-  if [[ ! "$cf_account_id" =~ ^[0-9a-f]{32}$ ]]; then
-    echo "ERROR: Account ID must be a 32-character hex string"; exit 1
-  fi
-
-  read -rp "Cloudflare API Token: " cf_api_token
-  [[ -z "$cf_api_token" ]] && { echo "API Token is required."; exit 1; }
-
-  read -rp "Admin email [matt@matthewdeaves.com]: " email
-  email="${email:-matt@matthewdeaves.com}"
-  if [[ ! "$email" =~ ^[^@]+@[^@]+\.[^@]+$ ]]; then
-    echo "ERROR: Invalid email format: $email"; exit 1
-  fi
-
-  read -rp "App subdomains (comma-separated) [cookie]: " subdomains
-  subdomains="${subdomains:-cookie}"
-
-  # Convert comma-separated to terraform list
-  local tf_subdomains
-  tf_subdomains=$(echo "$subdomains" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | awk '{printf "  \"%s\",\n", $0}')
-
-  (
-    umask 077
-    cat > "$ENV_FILE" <<EOF
-export CLOUDFLARE_API_TOKEN="$cf_api_token"
-EOF
-  )
-  echo "Written to terraform/.env"
-
-  cat > "$TERRAFORM_DIR/terraform.tfvars" <<EOF
-region                = "$region"
-domain                = "$domain"
-cloudflare_zone_id    = "$cf_zone_id"
-cloudflare_account_id = "$cf_account_id"
-admin_email           = "$email"
-app_subdomains        = [
-$tf_subdomains]
-EOF
+  load_env
 
   echo
-  echo "Setting up prerequisites..."
-  echo "  Config ............... written (terraform.tfvars + .env)"
-
+  echo "Checking prerequisites..."
   ensure_deployer_access
   ensure_state_backend
 
@@ -1748,6 +1678,114 @@ cmd_threats_blocked() {
     done
 }
 
+cmd_threats_allow() {
+  # Create a Cloudflare IP Access Rule of mode "whitelist" so the caller IP
+  # bypasses WAF challenges and rate limits — primarily for pentest sessions.
+  # With no IP argument, auto-detects the caller's public IP via ifconfig.me.
+  local ip="" note="pentest: allowlist via CLI"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --note) note="${2:?--note requires a value}"; shift 2 ;;
+      -*) die "Unknown flag: $1" ;;
+      *) ip="$1"; shift ;;
+    esac
+  done
+
+  if [[ -z "$ip" ]]; then
+    echo "No IP specified — detecting public IP..."
+    ip=$(curl -fsS https://ifconfig.me 2>/dev/null) \
+      || die "Failed to detect public IP. Provide it explicitly: appserver threats allow <ip>"
+    echo "Detected public IP: $ip"
+  fi
+
+  if [[ ! "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && [[ ! "$ip" =~ ^[0-9a-fA-F:]+$ ]]; then
+    die "Invalid IP format: $ip"
+  fi
+
+  echo "Allowlisting $ip..."
+  local body
+  body=$(jq -n --arg ip "$ip" --arg note "$note" '{
+    mode: "whitelist",
+    configuration: { target: "ip", value: $ip },
+    notes: $note
+  }')
+
+  local response
+  response=$(cf_api POST "/firewall/access_rules/rules" "$body")
+
+  local success
+  success=$(echo "$response" | jq -r '.success')
+  if [[ "$success" != "true" ]]; then
+    local errors
+    errors=$(echo "$response" | jq -r '.errors[]?.message // empty')
+    if echo "$errors" | grep -qi "already exists"; then
+      echo "IP $ip is already allowlisted."
+      return 2
+    fi
+    echo "ERROR: Failed to allowlist $ip" >&2
+    echo "$response" | jq -r '.errors[]?.message // empty' >&2
+    return 1
+  fi
+
+  local rule_id
+  rule_id=$(echo "$response" | jq -r '.result.id')
+  echo "Allowlisted $ip (rule ID: $rule_id)"
+
+  _track_action "allow_ip" "$ip" "$rule_id" "success" ""
+}
+
+cmd_threats_unallow() {
+  local ip="${1:?Usage: appserver threats unallow <ip>}"
+
+  echo "Looking up allow rule for $ip..."
+  local response
+  response=$(cf_api GET "/firewall/access_rules/rules?mode=whitelist&configuration.value=$ip")
+
+  local rule_id
+  rule_id=$(echo "$response" | jq -r '.result[]? | select(.configuration.value == "'"$ip"'") | .id' | head -1)
+
+  if [[ -z "$rule_id" ]]; then
+    echo "ERROR: No allow rule found for $ip" >&2
+    return 1
+  fi
+
+  local del_response
+  del_response=$(cf_api DELETE "/firewall/access_rules/rules/$rule_id")
+
+  local success
+  success=$(echo "$del_response" | jq -r '.success')
+  if [[ "$success" != "true" ]]; then
+    echo "ERROR: Failed to remove allow rule for $ip" >&2
+    echo "$del_response" | jq -r '.errors[]?.message // empty' >&2
+    return 1
+  fi
+
+  echo "Removed allow rule for $ip (removed rule $rule_id)"
+  _track_action "unallow_ip" "$ip" "$rule_id" "success" ""
+}
+
+cmd_threats_allowed() {
+  local response
+  response=$(cf_api GET "/firewall/access_rules/rules?mode=whitelist&per_page=50")
+
+  local count
+  count=$(echo "$response" | jq '.result | length')
+
+  if [[ "$count" -eq 0 ]]; then
+    echo "No IPs currently allowlisted."
+    return 0
+  fi
+
+  echo "Allowlisted IPs ($count):"
+  echo
+  printf "%-18s %-40s %-22s %s\n" "IP" "Note" "Created" "Rule ID"
+  printf "%-18s %-40s %-22s %s\n" "--" "----" "-------" "-------"
+  echo "$response" | jq -r '.result[] | [.configuration.value, .notes, .created_on, .id] | @tsv' |
+    while IFS=$'\t' read -r ip note created rule_id; do
+      printf "%-18s %-40s %-22s %s\n" "$ip" "${note:0:38}" "${created:0:19}" "$rule_id"
+    done
+}
+
 cmd_threats_list() {
   if [[ ! -d "$REPORTS_DIR" ]]; then
     echo "No threat reports found."
@@ -1873,12 +1911,88 @@ cmd_threats() {
     block)    shift; cmd_threats_block "$@" ;;
     unblock)  shift; cmd_threats_unblock "$@" ;;
     blocked)  cmd_threats_blocked ;;
+    allow)    shift; cmd_threats_allow "$@" ;;
+    unallow)  shift; cmd_threats_unallow "$@" ;;
+    allowed)  cmd_threats_allowed ;;
     ""|--*)   cmd_threats_analyze "$@" ;;
-    *)        echo "Usage: appserver threats [--since <duration>] | report [<timestamp>] | list | block <ip> | unblock <ip> | blocked" ;;
+    *)        echo "Usage: appserver threats [--since <duration>] | report [<timestamp>] | list | block <ip> | unblock <ip> | blocked | allow [<ip>] | unallow <ip> | allowed" ;;
   esac
 }
 
 # --- Setup ---
+
+cmd_setup_local() {
+  # Write local machine config: terraform/.env (CF API token) and
+  # terraform/terraform.tfvars (region, domain, CF IDs, email, subdomains).
+  # Pure local — makes no AWS calls, safe to run before any AWS credentials
+  # are configured.
+  local force=""
+  if [[ "${1:-}" == "--force" ]]; then
+    force=1
+  fi
+
+  if [[ -f "$TERRAFORM_DIR/terraform.tfvars" && -z "$force" ]]; then
+    echo "Existing terraform.tfvars found."
+    read -rp "Overwrite? [y/N]: " overwrite
+    if [[ "$overwrite" != [yY] ]]; then
+      echo "Kept existing config."
+      return 0
+    fi
+  fi
+
+  read -rp "AWS region [eu-west-2]: " region
+  region="${region:-eu-west-2}"
+  [[ "$region" =~ ^[a-z]{2}-[a-z]+-[0-9]+$ ]] \
+    || die "Invalid AWS region format: $region"
+
+  read -rp "Base domain (e.g. matthewdeaves.com): " domain
+  [[ -n "$domain" ]] || die "Domain is required."
+  [[ "$domain" =~ ^[a-z0-9][a-z0-9.-]+\.[a-z]{2,}$ ]] \
+    || die "Invalid domain format: $domain"
+
+  read -rp "Cloudflare Zone ID: " cf_zone_id
+  [[ -n "$cf_zone_id" ]] || die "Zone ID is required."
+  [[ "$cf_zone_id" =~ ^[0-9a-f]{32}$ ]] \
+    || die "Zone ID must be a 32-character hex string"
+
+  read -rp "Cloudflare Account ID: " cf_account_id
+  [[ -n "$cf_account_id" ]] || die "Account ID is required."
+  [[ "$cf_account_id" =~ ^[0-9a-f]{32}$ ]] \
+    || die "Account ID must be a 32-character hex string"
+
+  read -rp "Cloudflare API Token: " cf_api_token
+  [[ -n "$cf_api_token" ]] || die "API Token is required."
+
+  read -rp "Admin email [matt@matthewdeaves.com]: " email
+  email="${email:-matt@matthewdeaves.com}"
+  [[ "$email" =~ ^[^@]+@[^@]+\.[^@]+$ ]] \
+    || die "Invalid email format: $email"
+
+  read -rp "App subdomains (comma-separated) [cookie]: " subdomains
+  subdomains="${subdomains:-cookie}"
+
+  local tf_subdomains
+  tf_subdomains=$(echo "$subdomains" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | awk '{printf "  \"%s\",\n", $0}')
+
+  (
+    umask 077
+    cat > "$ENV_FILE" <<EOF
+export CLOUDFLARE_API_TOKEN="$cf_api_token"
+EOF
+  )
+
+  cat > "$TERRAFORM_DIR/terraform.tfvars" <<EOF
+region                = "$region"
+domain                = "$domain"
+cloudflare_zone_id    = "$cf_zone_id"
+cloudflare_account_id = "$cf_account_id"
+admin_email           = "$email"
+app_subdomains        = [
+$tf_subdomains]
+EOF
+
+  echo "  Config ............... written (terraform.tfvars + .env)"
+}
 
 cmd_setup_unlock() {
   if ! command -v git-crypt &>/dev/null; then
@@ -1938,11 +2052,13 @@ cmd_setup_lock() {
 
 cmd_setup() {
   case "${1:-}" in
+    local)   shift; cmd_setup_local "$@" ;;
     unlock)  cmd_setup_unlock "${2:-}" ;;
     lock)    cmd_setup_lock ;;
     *)
-      echo "Usage: appserver setup {unlock [key-file]|lock}"
+      echo "Usage: appserver setup {local|unlock [key-file]|lock}"
       echo
+      echo "  local [--force]     Interactively write terraform/.env + tfvars (no AWS calls)"
       echo "  unlock              Fetch key from SSM and decrypt pentest targets"
       echo "  unlock <key-file>   Decrypt using a local key file"
       echo "  lock                Re-encrypt files in working tree"
@@ -2018,12 +2134,16 @@ case "${1:-}" in
     echo "  threats block <ip> [--note]  Block IP via Cloudflare WAF"
     echo "  threats unblock <ip>         Unblock IP"
     echo "  threats blocked              List blocked IPs"
+    echo "  threats allow [<ip>]         Allowlist IP in CF WAF (defaults to your public IP — for pentests)"
+    echo "  threats unallow <ip>         Remove allowlist rule"
+    echo "  threats allowed              List allowlisted IPs"
     echo
     echo "Config:"
     echo "  config push              Upload config to instance and restart Traefik"
     echo "  config check-ips [--fix] Audit Cloudflare IP ranges in traefik.yml"
     echo
     echo "Setup:"
+    echo "  setup local [--force]    Write terraform/.env + tfvars (for existing infra, no AWS admin)"
     echo "  setup unlock [key-file]  Decrypt pentest targets (fetches key from SSM)"
     echo "  setup lock               Re-encrypt files in working tree"
     ;;

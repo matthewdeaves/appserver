@@ -146,8 +146,9 @@ Known symptom-to-cause mappings for appserver infrastructure. For Cookie-specifi
 
 ### Init fails with "Cannot create AppserverAdmin policy"
 **Symptoms:** `appserver.sh init` fails creating the AppserverAdmin policy
-**Cause:** Calling user doesn't have `iam:CreatePolicy` permission
-**Fix:** Create the policy manually as root/IAM admin. One-time bootstrap step. Destroy now keeps AppserverAdmin intact.
+**Cause:** Calling user doesn't have `iam:CreatePolicy` permission (deployer profile is active, or default creds lack admin)
+**Fix:** `init` needs admin credentials — unset `AWS_PROFILE` (or switch to an admin profile) before running. Create the policy manually as root/IAM admin if the admin user itself lacks `iam:CreatePolicy`. One-time bootstrap step — `destroy` keeps AppserverAdmin intact for re-init.
+**Note:** most "new machine" setups don't need `init` at all. If deployer IAM + state bucket already exist, use `./scripts/appserver.sh setup local` (writes local config without touching AWS) and go straight to `deploy`.
 
 ### Terraform state lock
 **Symptoms:** `terraform apply` says state is locked

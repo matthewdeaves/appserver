@@ -29,7 +29,7 @@ services:
           memory: 256M
 
   web:
-    image: ghcr.io/matthewdeaves/cookie:${COOKIE_VERSION:-1.44.0}
+    image: ghcr.io/matthewdeaves/cookie:${COOKIE_VERSION:-1.45.0}
     container_name: cookie-web
     restart: unless-stopped
     volumes:
@@ -45,7 +45,7 @@ services:
       - WEBAUTHN_RP_NAME=${WEBAUTHN_RP_NAME:-Cookie}
       - SITE_URL=${SITE_URL:-https://cookie.matthewdeaves.com}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
-      - COOKIE_VERSION=${COOKIE_VERSION:-1.44.0}
+      - COOKIE_VERSION=${COOKIE_VERSION:-1.45.0}
       - LOG_FORMAT=${LOG_FORMAT:-json}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     depends_on:

@@ -24,7 +24,8 @@ scripts/bootstrap.sh    # EC2 user_data (Docker, Traefik, cloudflared)
 ## Key Commands
 
 ```bash
-./scripts/appserver.sh init          # Interactive setup (IAM, state bucket, tfvars)
+./scripts/appserver.sh init          # First-time AWS infra bootstrap (IAM + state bucket, needs admin creds)
+./scripts/appserver.sh setup local   # Write terraform/.env + tfvars on a new dev machine (no AWS admin)
 ./scripts/appserver.sh deploy        # terraform init + apply
 ./scripts/appserver.sh destroy       # terraform destroy + optional bootstrap cleanup
 ./scripts/appserver.sh status        # Running containers + resource usage
@@ -49,37 +50,46 @@ scripts/bootstrap.sh    # EC2 user_data (Docker, Traefik, cloudflared)
 ./scripts/appserver.sh threats block <ip>      # Block IP via Cloudflare WAF
 ./scripts/appserver.sh threats unblock <ip>    # Unblock IP
 ./scripts/appserver.sh threats blocked         # List blocked IPs
+./scripts/appserver.sh threats allow [<ip>]    # Allowlist IP in CF WAF (defaults to public IP; use for pentests)
+./scripts/appserver.sh threats unallow <ip>    # Remove allowlist rule
+./scripts/appserver.sh threats allowed         # List allowlisted IPs
 ./scripts/appserver.sh setup unlock            # Decrypt pentest targets (key from SSM)
 ./scripts/appserver.sh setup lock              # Re-encrypt pentest targets
 ```
 
 ## Developer Setup
 
-Secrets needed from the password vault: AWS deployer access key/secret, Cloudflare API token, GitHub SSH key.
+Three scenarios — pick one based on AWS account state (see README for the full decision table):
 
+- **A. Brand-new AWS account**: `init` (needs admin creds) → `deploy` → `app init cookie` → `app deploy cookie`
+- **B. Joining live infra on a new dev machine**: `aws configure --profile appserver` + `setup local` → `status`
+- **C. Rebuilding after a destroy** (IAM + state bucket still exist, no live infra): `aws configure --profile appserver` + `setup local` → `deploy` → `app init cookie` → `app deploy cookie`
+
+Secrets needed for B/C (from the password vault or Cloudflare/AWS console):
+- AWS deployer access key/secret for the `appserver-deployer` IAM user
+- Cloudflare API token (Zone DNS/Settings/WAF Edit, Account Tunnel Edit, Account Zero Trust Edit)
+- Cloudflare zone ID + account ID for the domain (not secrets, but `setup local` prompts for them)
+- GitHub SSH key
+
+Run `setup local` (interactive) to write `terraform/.env` + `terraform/terraform.tfvars`. It makes no AWS calls, so it's safe with the deployer profile or before any AWS credentials exist.
+
+`init` is idempotent but requires admin AWS credentials (can't run as the deployer user). Use it only for scenario A, or if a prior `destroy --cleanup-bootstrap` wiped the IAM user + state bucket.
+
+Optional: decrypt pentest target configs (requires SSM access + `git-crypt` installed locally):
 ```bash
-# AWS credentials for the appserver-deployer user
-aws configure --profile appserver
-
-# Cloudflare API token — terraform/.env is gitignored, per-machine
-cp terraform/.env.example terraform/.env   # then edit with the real token
-# Keep the `export` prefix in the file — load_env() sources it and the var
-# must be exported for Terraform/curl subprocesses.
-
-# Decrypt pentest target configs (requires AWS access to SSM)
 ./scripts/appserver.sh setup unlock            # Fetches key from SSM automatically
-# Or with a local key file:
-./scripts/appserver.sh setup unlock /path/to/appserver.key
+./scripts/appserver.sh setup unlock /path/to/appserver.key  # Or use a local key file
 ```
 
 Pentest target YAMLs (`pentest/targets/*.yaml`) are encrypted via git-crypt. They contain attack surface details, rate limits, and vulnerability history. The `.example` files are plain-text templates.
 
 Multi-machine gotchas: no Terraform state locking (S3 backend has no DynamoDB lock table — don't run `deploy` from two machines at once), deployer key has full infra + Cookie admin blast radius, prefer one Cloudflare token per machine for individual revocability.
 
-## Deploying Cookie (First Time)
+## Deploying Cookie
+
+After `deploy` has provisioned the instance (scenario A or C), bring Cookie up:
 
 ```bash
-./scripts/appserver.sh deploy              # Provision EC2 + Cloudflare
 ./scripts/appserver.sh app init cookie     # Auto-generate all secrets
 ./scripts/appserver.sh app deploy cookie   # Pull image + start
 # Visit https://cookie.matthewdeaves.com
