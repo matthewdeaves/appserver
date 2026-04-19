@@ -56,3 +56,21 @@ resource "cloudflare_zone_setting" "email_obfuscation" {
   setting_id = "email_obfuscation"
   value      = "on"
 }
+
+# HSTS at the Cloudflare edge. Without this, CF defaults override Traefik's
+# max-age=63072000;includeSubDomains;preload to max-age=15552000 (180 days, no
+# preload flags) — see config/traefik/dynamic/security-headers.yml. Kept at
+# 2 years to match Traefik; preload-eligible (>=1yr + includeSubDomains + preload).
+resource "cloudflare_zone_setting" "security_header" {
+  zone_id    = var.cloudflare_zone_id
+  setting_id = "security_header"
+  value = {
+    strict_transport_security = {
+      enabled            = true
+      max_age            = 63072000
+      include_subdomains = true
+      preload            = true
+      nosniff            = true
+    }
+  }
+}
