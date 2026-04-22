@@ -33,6 +33,13 @@ data "aws_ssm_parameter" "al2023_ami" {
 
 # IAM
 
+# Resource="*" is unavoidable on the SSMAgent statement: ssmmessages:* and
+# ec2messages:* actions don't expose per-channel ARNs. Scope is capped by (a) this
+# is the boundary itself, (b) the SSMParameters SID scopes ssm:GetParameter to
+# /appserver/*, (c) S3Artifacts SID scopes to the artifacts bucket, and (d) deployer
+# IAM denies PutRolePolicy to prevent runtime escalation.
+# trivy:ignore:AVD-AWS-0057
+# tfsec:ignore:aws-iam-no-policy-wildcards
 resource "aws_iam_policy" "instance_boundary" {
   name        = "Appserver-instance-boundary"
   description = "Permissions boundary for appserver EC2 instance role — caps effective permissions even if inline policies are added"
@@ -169,6 +176,13 @@ resource "aws_security_group" "appserver" {
   })
 }
 
+# The instance has zero inbound rules and must reach arbitrary public endpoints
+# outbound: Docker Hub/GHCR (image pulls), Cloudflare Tunnel edge (ingress), AWS SSM
+# endpoints (shell + parameter fetch), dnf package mirrors, and Cookie's outbound API
+# calls (OpenAI, etc.). A CIDR allowlist would need to track dozens of shifting
+# AWS/Cloudflare/registry ranges.
+# trivy:ignore:AVD-AWS-0104
+# tfsec:ignore:aws-vpc-no-public-egress-sgr
 resource "aws_vpc_security_group_egress_rule" "all_outbound" {
   security_group_id = aws_security_group.appserver.id
   description       = "All outbound - Docker pulls, Cloudflare Tunnel, SSM"

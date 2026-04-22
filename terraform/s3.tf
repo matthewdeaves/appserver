@@ -1,6 +1,12 @@
 # S3 bucket for deploy artifacts (Traefik config, app compose files).
 # Used by bootstrap (first boot) and config push (runtime updates).
 
+# Access is already audited: writes come only from the deployer IAM user (CloudTrail
+# data events cover s3:PutObject), reads come only from the instance role (same).
+# Adding a dedicated logs bucket would create a chicken-and-egg dependency and
+# recurring storage cost for data already captured.
+# trivy:ignore:AVD-AWS-0089
+# tfsec:ignore:aws-s3-enable-bucket-logging
 resource "aws_s3_bucket" "artifacts" {
   bucket        = "appserver-artifacts-${data.aws_caller_identity.current.account_id}-${var.region}"
   force_destroy = var.force_destroy
@@ -10,6 +16,11 @@ resource "aws_s3_bucket" "artifacts" {
   })
 }
 
+# SSE-S3 (AES256) is sufficient for this bucket: it holds Traefik config + app compose
+# files (no customer data, no secrets — secrets live in SSM SecureString). KMS would
+# add cost and key-management overhead without a corresponding threat-model improvement.
+# trivy:ignore:AVD-AWS-0132
+# tfsec:ignore:aws-s3-encryption-customer-key
 resource "aws_s3_bucket_server_side_encryption_configuration" "artifacts" {
   bucket = aws_s3_bucket.artifacts.id
 

@@ -47,6 +47,9 @@
       }
     ]
   },
+  "enabledPlugins": {
+    "terraform-skill@antonbabenko": true
+  },
   "extraKnownMarketplaces": {
     "antonbabenko": {
       "source": {
@@ -54,8 +57,5 @@
         "repo": "antonbabenko/terraform-skill"
       }
     }
-  },
-  "enabledPlugins": {
-    "terraform-skill@antonbabenko": true
   }
 }
