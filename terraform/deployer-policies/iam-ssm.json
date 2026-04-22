@@ -148,7 +148,10 @@
       ],
       "Resource": [
         "arn:aws:ssm:*:*:session/*",
-        "arn:aws:ssm:*::document/AWS-StartInteractiveCommand"
+        "arn:aws:ssm:*::document/AWS-StartInteractiveCommand",
+        "arn:aws:ssm:*:*:document/AWS-StartInteractiveCommand",
+        "arn:aws:ssm:*::document/SSM-SessionManagerRunShell",
+        "arn:aws:ssm:*:*:document/SSM-SessionManagerRunShell"
       ]
     },
     {
