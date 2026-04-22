@@ -4,7 +4,7 @@
 
 services:
   db:
-    image: postgres:18-alpine
+    image: postgres:17-alpine
     container_name: cookie-db
     restart: unless-stopped
     volumes:
