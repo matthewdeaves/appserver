@@ -31,6 +31,22 @@ jobs:
       - name: Terraform Validate
         run: terraform -chdir=terraform validate
 
+      - name: Cookie version sync check
+        run: |
+          compose=config/apps/cookie/docker-compose.yml
+          img=$(grep -oP 'cookie:\$\{COOKIE_VERSION:-\K[^}]+' "$compose")
+          env=$(grep -oP 'COOKIE_VERSION=\$\{COOKIE_VERSION:-\K[^}]+' "$compose")
+          if [ -z "$img" ] || [ -z "$env" ]; then
+            echo "Could not parse COOKIE_VERSION defaults in $compose" >&2
+            exit 1
+          fi
+          if [ "$img" != "$env" ]; then
+            echo "COOKIE_VERSION drift in $compose: image=$img env=$env" >&2
+            echo "Both defaults must match. See CLAUDE.md: 'compose default is authoritative'." >&2
+            exit 1
+          fi
+          echo "COOKIE_VERSION in sync: $img"
+
       - name: ShellCheck scripts
         uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # v2.0.0
         with:
