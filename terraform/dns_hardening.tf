@@ -44,12 +44,20 @@ resource "cloudflare_dns_record" "caa_iodef" {
   }
 }
 
-# DMARC starts at p=none (monitoring-only). Review aggregate reports at rua=, then
-# tighten to quarantine/reject once legitimate mail sources are confirmed in SPF/DKIM.
+# SPF: only iCloud is an authorised sender; hard-fail everything else.
+resource "cloudflare_dns_record" "spf" {
+  zone_id = var.cloudflare_zone_id
+  name    = var.domain
+  type    = "TXT"
+  ttl     = 1
+  content = "\"v=spf1 include:icloud.com -all\""
+}
+
+# DMARC: p=reject instructs receivers to discard mail that fails SPF/DKIM alignment.
 resource "cloudflare_dns_record" "dmarc" {
   zone_id = var.cloudflare_zone_id
   name    = "_dmarc.${var.domain}"
   type    = "TXT"
   ttl     = 1
-  content = "\"v=DMARC1; p=none; rua=mailto:${var.admin_email}; ruf=mailto:${var.admin_email}; fo=1\""
+  content = "\"v=DMARC1; p=reject; rua=mailto:${var.admin_email}; ruf=mailto:${var.admin_email}; fo=1\""
 }

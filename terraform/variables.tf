@@ -69,6 +69,17 @@ variable "app_subdomains" {
   }
 }
 
+variable "public_app_subdomains" {
+  description = "Apps that bypass CF Access — the app handles auth itself. Must be a subset of app_subdomains."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for s in var.public_app_subdomains : can(regex("^[a-z0-9][a-z0-9-]*$", s))])
+    error_message = "Subdomains must be lowercase alphanumeric with hyphens."
+  }
+}
+
 variable "admin_email" {
   description = "Email for Cloudflare Access OTP and budget alerts"
   type        = string
