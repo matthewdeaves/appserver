@@ -22,6 +22,12 @@ for var_name in REGION TUNNEL_TOKEN_SSM CLOUDFLARED_VERSION CLOUDFLARED_SHA256 D
   [[ -n "$val" ]] || die "$var_name is empty — check Terraform templatefile() variables"
 done
 
+# --- System hardening ---
+# Access is via Cloudflare Tunnel + AWS SSM only; sshd is never needed and
+# contradicts the "no open ports" architecture (pentest R15 / INFO-6).
+systemctl disable --now sshd 2>/dev/null || true
+echo "sshd disabled"
+
 # --- Swap (512MB) ---
 if [[ ! -f /swapfile ]]; then
   echo "Creating swap..."
