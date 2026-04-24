@@ -4,14 +4,10 @@
       "Read(./terraform/.env)",
       "Read(~/.aws/credentials)",
       "Read(~/.aws/config)",
-      "Read(./pentest/targets/*.yaml)",
-      "Read(./pentest/targets/*.yml)",
       "Read(./.git-crypt/**)",
       "Edit(./terraform/.env)",
       "Edit(~/.aws/credentials)",
-      "Edit(~/.aws/config)",
-      "Edit(./pentest/targets/*.yaml)",
-      "Edit(./pentest/targets/*.yml)"
+      "Edit(~/.aws/config)"
     ]
   },
   "hooks": {

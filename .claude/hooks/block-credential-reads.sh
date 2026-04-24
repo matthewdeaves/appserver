@@ -18,7 +18,6 @@ patterns=(
   'terraform/\.env([^a-zA-Z0-9.]|$)'
   '\.aws/credentials([^a-zA-Z0-9.]|$)'
   '\.aws/config([^a-zA-Z0-9.]|$)'
-  'pentest/targets/[^/ ]+\.ya?ml([^a-zA-Z0-9.]|$)'
   '\.git-crypt/'
 )
 
