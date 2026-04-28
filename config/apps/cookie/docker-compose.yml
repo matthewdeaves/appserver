@@ -29,7 +29,7 @@ services:
           memory: 256M
 
   web:
-    image: ghcr.io/matthewdeaves/cookie:${COOKIE_VERSION:-1.67.1}
+    image: ghcr.io/matthewdeaves/cookie:${COOKIE_VERSION:-1.67.2}
     container_name: cookie-web
     restart: unless-stopped
     volumes:
@@ -46,7 +46,10 @@ services:
       - WEBAUTHN_RP_ORIGIN=${WEBAUTHN_RP_ORIGIN:-https://cookie.matthewdeaves.com}
       - SITE_URL=${SITE_URL:-https://cookie.matthewdeaves.com}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
-      - COOKIE_VERSION=${COOKIE_VERSION:-1.63.0}
+      # COOKIE_VERSION is intentionally NOT set here — it is baked into the
+      # image at build time by the CD pipeline (Dockerfile.prod ARG/ENV).
+      # Setting it here would override the real build version with whatever
+      # default we pick, masking deploy mistakes.
       - LOG_FORMAT=${LOG_FORMAT:-json}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     depends_on:
