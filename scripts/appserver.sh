@@ -1160,6 +1160,150 @@ cmd_app_env() {
 
 REPORTS_DIR="$SCRIPT_DIR/../reports/threats"
 
+# Collect app-layer security data from the instance via SSM.
+# Gathers: cookie_admin audit events, nginx 4xx/5xx summary, container die/OOM
+# events, and cloudflared warning lines — all within the given time window.
+# Outputs a JSON object ready to be merged into the threat report.
+_collect_app_security() {
+  local duration_sec="$1"
+  local app_script
+  app_script=$(cat <<'APP_EOF'
+set -e
+CUTOFF_ISO=$(date -u -d "$DURATION_SEC seconds ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null \
+          || date -u -v-"${DURATION_SEC}S" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null \
+          || date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+# Cookie security audit (last 200 events)
+AUDIT='{"ok":false,"events":[]}'
+if docker ps --filter name=cookie-web --filter status=running --format '{{.Names}}' 2>/dev/null | grep -q cookie-web; then
+  AUDIT=$(docker exec cookie-web python manage.py cookie_admin audit --json --lines 200 2>/dev/null \
+          || echo '{"ok":false,"events":[]}')
+fi
+
+# Nginx status code summary from cookie-web (last 2000 access log lines)
+NGINX_5XX=0
+NGINX_4XX=0
+TOP_ERROR_PATHS=""
+if docker ps --filter name=cookie-web --filter status=running --format '{{.Names}}' 2>/dev/null | grep -q cookie-web; then
+  NGINX_LINES=$(docker exec cookie-web tail -2000 /var/log/nginx/access.log 2>/dev/null || echo "")
+  if [[ -n "$NGINX_LINES" ]]; then
+    NGINX_5XX=$(echo "$NGINX_LINES" | awk '{print $9}' | grep -cE '^5[0-9]{2}$' || echo 0)
+    NGINX_4XX=$(echo "$NGINX_LINES" | awk '{print $9}' | grep -cE '^4[0-9]{2}$' || echo 0)
+    TOP_ERROR_PATHS=$(echo "$NGINX_LINES" \
+      | awk '$9 ~ /^[45][0-9]{2}$/ {print $7}' \
+      | sort | uniq -c | sort -rn | head -10 \
+      | awk '{printf "%s:%s,", $2, $1}' | sed 's/,$//' || echo "")
+  fi
+fi
+
+# Docker container die/OOM events since cutoff
+CONTAINER_RESTARTS=$(docker events --since "$CUTOFF_ISO" \
+  --filter type=container \
+  --filter event=die \
+  --filter event=oom \
+  --format '{{.Time}} {{.Actor.Attributes.name}} {{.Action}} exit={{.Actor.Attributes.exitCode}}' \
+  2>/dev/null | head -20 || echo "")
+
+# cloudflared warnings since cutoff
+TUNNEL_WARNINGS=$(journalctl -u cloudflared --since "$CUTOFF_ISO" \
+  --no-pager -o short 2>/dev/null \
+  | grep -iE "error|warn|failed|disconnect|reconn|retry" \
+  | tail -10 || echo "")
+
+# Emit structured JSON
+jq -n \
+  --arg audit_raw "$AUDIT" \
+  --arg nginx_5xx "$NGINX_5XX" \
+  --arg nginx_4xx "$NGINX_4XX" \
+  --arg top_error_paths "$TOP_ERROR_PATHS" \
+  --arg container_restarts "$CONTAINER_RESTARTS" \
+  --arg tunnel_warnings "$TUNNEL_WARNINGS" \
+  '{
+    app_security: (
+      ($audit_raw | fromjson? // {"ok":false,"events":[]}) |
+      {
+        audit_ok: (.ok // false),
+        event_count: (.events // [] | length),
+        recent_registrations: (.events // [] | map(select(.type == "registration")) | length),
+        recent_logins: (.events // [] | map(select(.type == "passkey_login" or .type == "device_code_authorized")) | length),
+        events_sample: (.events // [] | .[0:5])
+      }
+    ),
+    app_errors: {
+      nginx_5xx: ($nginx_5xx | tonumber? // 0),
+      nginx_4xx: ($nginx_4xx | tonumber? // 0),
+      top_error_paths: (
+        if $top_error_paths == "" then []
+        else ($top_error_paths | split(",") | map(select(length > 0))
+          | map(split(":") | {path: .[0], count: (.[1] | tonumber? // 0)}))
+        end
+      )
+    },
+    container_events: {
+      restarts: (if $container_restarts == ""
+        then []
+        else ($container_restarts | split("\n") | map(select(length > 0)))
+        end)
+    },
+    tunnel_health: {
+      warnings: (if $tunnel_warnings == ""
+        then []
+        else ($tunnel_warnings | split("\n") | map(select(length > 0)))
+        end)
+    }
+  }'
+APP_EOF
+)
+  app_script="DURATION_SEC=$duration_sec
+$app_script"
+  ssm_run "$app_script" 60 2>/dev/null || echo '{}'
+}
+
+# Compare yesterday's AWS spend against the day before to detect cost anomalies.
+# Uses the Cost Explorer API (us-east-1 always). Returns JSON with anomaly field:
+# "normal" | "elevated" (>$2/day) | "spike" (>1.5x previous day).
+_check_cost_anomaly() {
+  local today yesterday two_days_ago
+  today=$(date +%Y-%m-%d)
+  yesterday=$(date -d '1 day ago' +%Y-%m-%d 2>/dev/null \
+           || date -v-1d +%Y-%m-%d 2>/dev/null || echo "")
+  two_days_ago=$(date -d '2 days ago' +%Y-%m-%d 2>/dev/null \
+              || date -v-2d +%Y-%m-%d 2>/dev/null || echo "")
+  [[ -n "$yesterday" && -n "$two_days_ago" ]] \
+    || { echo '{"available":false,"reason":"date calculation failed"}'; return; }
+
+  local result
+  result=$(aws ce get-cost-and-usage \
+    --profile appserver \
+    --time-period "Start=${two_days_ago},End=${today}" \
+    --granularity DAILY \
+    --metrics BlendedCost \
+    --region us-east-1 \
+    --output json 2>/dev/null) \
+    || { echo '{"available":false,"reason":"API call failed"}'; return; }
+
+  echo "$result" | jq '
+    .ResultsByTime as $r |
+    if ($r | length) >= 2 then
+      (($r[-2].Total.BlendedCost.Amount | tonumber) * 100 | round / 100) as $prev |
+      (($r[-1].Total.BlendedCost.Amount | tonumber) * 100 | round / 100) as $curr |
+      {
+        available: true,
+        yesterday: $curr,
+        day_before: $prev,
+        currency: $r[-1].Total.BlendedCost.Unit,
+        anomaly: (
+          if $prev > 0.01 and $curr > ($prev * 1.5) then "spike"
+          elif $curr > 2.0 then "elevated"
+          else "normal"
+          end
+        )
+      }
+    else {"available":false,"reason":"insufficient data"}
+    end
+  ' 2>/dev/null || echo '{"available":false,"reason":"parse failed"}'
+}
+
 cmd_threats_analyze() {
   local since="24h"
   while [[ $# -gt 0 ]]; do
@@ -1489,6 +1633,20 @@ $analysis_script"
     fi
   fi
 
+  # Collect app security data (cookie audit + nginx + containers + tunnel)
+  echo "Collecting app security data..."
+  local app_data
+  app_data=$(_collect_app_security "$duration_sec")
+  if echo "$app_data" | jq -e '.app_security' &>/dev/null; then
+    report=$(echo "$report" | jq --argjson app "$app_data" '. + $app')
+  fi
+
+  # Cost anomaly check (local AWS CE call)
+  echo "Checking AWS cost..."
+  local cost_data
+  cost_data=$(_check_cost_anomaly)
+  report=$(echo "$report" | jq --argjson cost "$cost_data" '.cost_anomaly = $cost')
+
   # Write report.json
   echo "$report" | jq '.' > "$report_dir/report.json"
 
@@ -1550,6 +1708,66 @@ $analysis_script"
         echo
         echo "**Top Blocked IPs:**"
         echo "$top_blocked"
+      fi
+    fi
+
+    # App Security section
+    local app_audit_ok registrations logins nginx_5xx nginx_4xx container_count tunnel_count
+    app_audit_ok=$(echo "$report" | jq -r '.app_security.audit_ok // false')
+    registrations=$(echo "$report" | jq -r '.app_security.recent_registrations // "?"')
+    logins=$(echo "$report" | jq -r '.app_security.recent_logins // "?"')
+    nginx_5xx=$(echo "$report" | jq -r '.app_errors.nginx_5xx // 0')
+    nginx_4xx=$(echo "$report" | jq -r '.app_errors.nginx_4xx // 0')
+    container_count=$(echo "$report" | jq '.container_events.restarts | length // 0')
+    tunnel_count=$(echo "$report" | jq '.tunnel_health.warnings | length // 0')
+
+    if [[ "$app_audit_ok" == "true" ]] || [[ "$nginx_5xx" -gt 0 ]] || [[ "$nginx_4xx" -gt 0 ]]; then
+      echo
+      echo "## App Security"
+      echo
+      echo "- **Registrations (window)**: $registrations"
+      echo "- **Auth events (window)**: $logins"
+      echo "- **App 5xx errors** (last 2000 nginx lines): $nginx_5xx"
+      echo "- **App 4xx errors** (last 2000 nginx lines): $nginx_4xx"
+      if [[ "$nginx_5xx" -gt 10 ]]; then
+        echo
+        echo "⚠️ **Elevated 5xx count** — check Cookie logs"
+        echo
+        echo "$report" | jq -r '.app_errors.top_error_paths[]? | "  \(.path) (\(.count))"' | head -5
+      fi
+    fi
+
+    if [[ "$container_count" -gt 0 ]]; then
+      echo
+      echo "## Container Events"
+      echo
+      echo "$report" | jq -r '.container_events.restarts[]?' | head -10
+    fi
+
+    if [[ "$tunnel_count" -gt 0 ]]; then
+      echo
+      echo "## Tunnel Warnings"
+      echo
+      echo "$report" | jq -r '.tunnel_health.warnings[]?' | head -5
+    fi
+
+    # Cost check section
+    local cost_available cost_anomaly cost_yesterday cost_day_before cost_currency
+    cost_available=$(echo "$report" | jq -r '.cost_anomaly.available // false')
+    cost_anomaly=$(echo "$report" | jq -r '.cost_anomaly.anomaly // "unknown"')
+    if [[ "$cost_available" == "true" ]]; then
+      cost_yesterday=$(echo "$report" | jq -r '.cost_anomaly.yesterday')
+      cost_day_before=$(echo "$report" | jq -r '.cost_anomaly.day_before')
+      cost_currency=$(echo "$report" | jq -r '.cost_anomaly.currency')
+      echo
+      echo "## Cost Check"
+      echo
+      echo "- **Yesterday**: ${cost_yesterday} ${cost_currency}"
+      echo "- **Day before**: ${cost_day_before} ${cost_currency}"
+      echo "- **Status**: ${cost_anomaly}"
+      if [[ "$cost_anomaly" == "spike" ]]; then
+        echo
+        echo "⚠️ **Cost spike detected** — investigate for unauthorized resource usage"
       fi
     fi
 

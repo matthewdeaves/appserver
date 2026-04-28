@@ -27,6 +27,16 @@ Input can be:
 - Health check requests ("is appserver healthy?", "is it up?")
 - Specific error messages or HTTP status codes
 
+## Scripts
+
+Helper scripts in `scripts/` — run from the appserver repo root:
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/quick-triage.sh` | All 7 health layers in one pass: EC2, SSM, containers, Traefik, cloudflared, resources, external curl |
+
+Use `quick-triage.sh` as Phase 1 before diving into individual layers. It exits 1 if any critical layer is degraded.
+
 ## Workflow
 
 Execute these 4 phases in order. Every phase is mandatory.

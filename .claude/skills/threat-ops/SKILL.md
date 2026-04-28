@@ -17,7 +17,13 @@ You **MUST** consider the user input before proceeding (if not empty).
 
 ## Purpose
 
-Detect and respond to threats against appserver — analyze Traefik access logs for attack patterns, review threat reports, and enact defensive actions (IP blocks) via Cloudflare WAF API.
+Detect and respond to threats against appserver. Analyzes multiple data sources:
+- **Traefik access logs** — scanner paths, UA signatures, traversal, rate anomalies
+- **Cookie app security** — registration/auth events, nginx 4xx/5xx, unusual patterns
+- **Container events** — die/OOM events (DoS indicator)
+- **cloudflared tunnel** — reconnection warnings, auth failures
+- **Cloudflare edge** — WAF blocks + rate-limit triggers before they hit Traefik
+- **AWS cost** — spend anomalies indicating unauthorized resource use
 
 For **infrastructure issues** (downtime, deploy failures, routing), use `/appserver-ops` instead. For **app-specific issues** (Cookie, passkeys, cron), use `/cookie-ops`.
 
@@ -26,18 +32,30 @@ Input can be:
 - Free-form: "what's attacking the server?", "block that scanner", "show me the latest report"
 - No input defaults to **analyze** mode
 
+## Scripts
+
+Helper scripts in `scripts/` — run from the appserver repo root:
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/collect-app-security.sh [--since <duration>]` | SSM: cookie audit + nginx errors + container events + tunnel warnings → JSON |
+| `scripts/check-cost.sh` | Local AWS CE call: yesterday vs day-before spend + anomaly flag → JSON |
+
+These are called automatically by `appserver.sh threats` during analysis. Use them standalone for quick targeted checks.
+
 ## Workflow
 
 ### Mode: Analyze (default)
 
 Trigger: `/threat-ops`, `/threat-ops analyze`, "run threat analysis", "check for attacks"
 
-1. Run analysis via subagent:
+1. Run full analysis via subagent:
    ```bash
    ./scripts/appserver.sh threats --since 24h
    ```
+   This collects all data sources in sequence: Traefik logs → CF edge → app security (SSM) → cost check.
 2. Read the generated `reports/threats/<timestamp>/report.json`
-3. Present SUMMARY.md to the user
+3. Present `SUMMARY.md` to the user — it includes Traefik findings, app security, container events, tunnel health, and cost
 4. For each **high-confidence** recommendation, offer to enact it:
    - "Finding F-001: zgrab scanner from 45.33.32.156 (847 requests, 100% errors). Block?"
 5. If user approves, run:
@@ -100,6 +118,12 @@ Always produce a structured report:
 ### Findings (if analyze/review)
 [Top findings by severity]
 
+### App Security
+[Registrations, auth events, nginx error counts]
+
+### Container / Tunnel / Cost (if noteworthy)
+[Container die events, tunnel reconnections, cost anomaly]
+
 ### Actions Taken (if block)
 - [What was done, CF rule ID, verification]
 
@@ -120,13 +144,15 @@ Always produce a structured report:
 
 ## Gotchas
 
-- **SSM commands return async.** `ssm_run` handles polling, but analysis can take up to 2 minutes for large log files. Be patient.
-- **Access logs must be enabled first.** If no logs exist, run `config push` to deploy the updated Traefik config, wait for traffic.
+- **SSM commands return async.** Analysis can take up to 2 minutes for large log files. Be patient.
+- **App security collection adds ~15s.** `_collect_app_security` runs an SSM script gathering cookie audit + nginx + container events. This is a second SSM round-trip after the Traefik analysis.
+- **CF edge data requires Analytics:Read.** Token must have Account Analytics → Read. If `cf_edge.available` is false in the report, the permission is missing.
+- **Access logs must be enabled first.** If no Traefik logs exist, run `config push` to deploy the updated Traefik config, wait for traffic.
+- **Cost check uses us-east-1 always.** AWS Cost Explorer API endpoint is us-east-1 regardless of resource region — this is expected.
+- **Cookie audit shows events not time-filtered.** `cookie_admin audit` returns the N most recent events regardless of time window. Counts in the report reflect the last 200 events, not the exact time window.
 - **CF API rate limits.** 1200 requests/5 minutes. Manual blocking won't hit this, but be aware for bulk operations.
-- **CF edge data is optional.** Requires Analytics:Read permission on the API token. If missing, `cf_edge` will be null — not an error.
-- **CLOUDFLARE_API_TOKEN must be set.** Block/unblock/blocked commands need it. The analyze command needs it for CF edge data but works without it.
-- **Logrotate on existing instances.** bootstrap.sh only runs on first boot. For existing instances, `config push` deploys the logrotate config via SSM.
 - **Report timestamps are UTC.** Directory names use `YYYYMMDD-HHMMSS` format in UTC.
+- **CLOUDFLARE_API_TOKEN must be set.** Block/unblock/blocked commands need it. The analyze command needs it for CF edge + WAF data.
 
 ## Rules
 

@@ -25,6 +25,15 @@ Input can be:
 - Health checks ("is cookie healthy?", "check the cron jobs")
 - Version management ("what version is running?", "deploy latest cookie")
 
+## Scripts
+
+Helper scripts in `scripts/` — run from the appserver repo root:
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/quick-health.sh` | Single SSM call: cookie_admin status + running version + user list → JSON |
+| `scripts/check-crons.sh` | SSM: supercronic process, /app/crontab contents, recent cron output |
+
 ## Quick Reference
 
 | Task | Command |
@@ -57,7 +66,7 @@ Input can be:
 ### For version upgrades
 
 1. Verify the image exists on GHCR (CD workflow must be complete)
-2. Update version in `config/apps/cookie/docker-compose.yml` (image tag default + `COOKIE_VERSION` env default)
+2. Update the image tag default in `config/apps/cookie/docker-compose.yml` (the `${COOKIE_VERSION:-X.Y.Z}` default on the `image:` line)
 3. `./scripts/appserver.sh config push` then `./scripts/appserver.sh app deploy cookie`
 4. **Watch for crash loops** — check container status within 30 seconds
 5. If crash-looping, roll back: revert compose file, `config push`, `app deploy`
