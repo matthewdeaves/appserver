@@ -144,7 +144,7 @@ shellcheck scripts/*.sh                             # Shell script linting
 
 - **EC2**: t4g.small (ARM/Graviton), Amazon Linux 2023, 20GB gp3 encrypted EBS
 - **Ingress**: Cloudflare Tunnel (zero inbound security group rules)
-- **Auth**: Cloudflare Access — email OTP for browser, service token for CLI
+- **Auth**: Cloudflare Access — service token for CLI only. Cookie subdomain is public (`public_app_subdomains = ["cookie"]` in terraform.tfvars); passkey auth is the only gate. Other subdomains remain email OTP protected.
 - **Routing**: Traefik reverse proxy — routes subdomains via Docker labels
 - **Remote access**: AWS SSM (no SSH keys, no open ports)
 - **Monitoring**: Monthly budget alarm ($10), EC2 auto-recovery, daily EBS snapshots (7-day retention)
