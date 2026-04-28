@@ -4,7 +4,7 @@
 
 - `CLOUDFLARE_API_TOKEN` environment variable set
 - Token needs: **Zone WAF Edit** (for IP access rules)
-- Optional: **Analytics:Read** (for CF edge data enrichment)
+- Optional: **Zone Analytics → Read** (for CF edge data enrichment via `firewallEventsAdaptive` GraphQL)
 - `cloudflare_zone_id` in `terraform/terraform.tfvars`
 
 ## IP Access Rules API

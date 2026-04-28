@@ -53,7 +53,8 @@ if docker ps --filter name=cookie-web --filter status=running --format '{{.Names
       | awk '{printf "%s:%s,", $2, $1}' | sed 's/,$//' || echo "")
   fi
 fi
-CONTAINER_RESTARTS=$(docker events --since "$CUTOFF_ISO" \
+UNTIL_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+CONTAINER_RESTARTS=$(docker events --since "$CUTOFF_ISO" --until "$UNTIL_ISO" \
   --filter type=container --filter event=die --filter event=oom \
   --format '{{.Time}} {{.Actor.Attributes.name}} {{.Action}} exit={{.Actor.Attributes.exitCode}}' \
   2>/dev/null | head -20 || echo "")

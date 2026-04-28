@@ -35,8 +35,8 @@ RESULT=$(aws ce get-cost-and-usage \
 echo "$RESULT" | jq '
   .ResultsByTime as $r |
   if ($r | length) >= 2 then
-    (($r[-2].Total.BlendedCost.Amount | tonumber) * 100 | round / 100) as $prev |
-    (($r[-1].Total.BlendedCost.Amount | tonumber) * 100 | round / 100) as $curr |
+    (($r[-2].Total.BlendedCost.Amount | tonumber) * 100 | round / 100 | fabs) as $prev |
+    (($r[-1].Total.BlendedCost.Amount | tonumber) * 100 | round / 100 | fabs) as $curr |
     {
       available: true,
       yesterday: $curr,

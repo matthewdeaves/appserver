@@ -146,7 +146,7 @@ Always produce a structured report:
 
 - **SSM commands return async.** Analysis can take up to 2 minutes for large log files. Be patient.
 - **App security collection adds ~15s.** `_collect_app_security` runs an SSM script gathering cookie audit + nginx + container events. This is a second SSM round-trip after the Traefik analysis.
-- **CF edge data requires Analytics:Read.** Token must have Account Analytics → Read. If `cf_edge.available` is false in the report, the permission is missing.
+- **CF edge data requires Zone Analytics → Read.** The `firewallEventsAdaptive` GraphQL query is a zone-level query — it needs **Zone Analytics → Read** on the CF API token (not Account Analytics → Read). If `cf_edge.available` is false in the report, check token permissions.
 - **Access logs must be enabled first.** If no Traefik logs exist, run `config push` to deploy the updated Traefik config, wait for traffic.
 - **Cost check uses us-east-1 always.** AWS Cost Explorer API endpoint is us-east-1 regardless of resource region — this is expected.
 - **Cookie audit shows events not time-filtered.** `cookie_admin audit` returns the N most recent events regardless of time window. Counts in the report reflect the last 200 events, not the exact time window.

@@ -1196,8 +1196,11 @@ if docker ps --filter name=cookie-web --filter status=running --format '{{.Names
   fi
 fi
 
-# Docker container die/OOM events since cutoff
-CONTAINER_RESTARTS=$(docker events --since "$CUTOFF_ISO" \
+# Docker container die/OOM events since cutoff.
+# --until is required: without it docker events tails live events indefinitely,
+# causing the subshell to hang when no historical events exist.
+UNTIL_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+CONTAINER_RESTARTS=$(docker events --since "$CUTOFF_ISO" --until "$UNTIL_ISO" \
   --filter type=container \
   --filter event=die \
   --filter event=oom \
@@ -1285,8 +1288,8 @@ _check_cost_anomaly() {
   echo "$result" | jq '
     .ResultsByTime as $r |
     if ($r | length) >= 2 then
-      (($r[-2].Total.BlendedCost.Amount | tonumber) * 100 | round / 100) as $prev |
-      (($r[-1].Total.BlendedCost.Amount | tonumber) * 100 | round / 100) as $curr |
+      (($r[-2].Total.BlendedCost.Amount | tonumber) * 100 | round / 100 | fabs) as $prev |
+      (($r[-1].Total.BlendedCost.Amount | tonumber) * 100 | round / 100 | fabs) as $curr |
       {
         available: true,
         yesterday: $curr,
