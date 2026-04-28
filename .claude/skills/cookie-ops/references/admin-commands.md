@@ -278,12 +278,14 @@ Shows all migrations. `[X]` = applied, `[ ]` = pending. Pending migrations run a
 
 ## Cron Health Check
 
+Cookie uses **supercronic** (not system cron). The crontab is at `/app/crontab` inside the container.
+
 ```bash
-# Check if cron daemon is running
-docker exec cookie-web pgrep -a cron
+# Check if supercronic is running
+docker exec cookie-web pgrep -a supercronic
 
 # Check crontab
-docker exec cookie-web cat /etc/cron.d/cookie-cleanup
+docker exec cookie-web cat /app/crontab
 
 # Check recent cron output in logs
 docker logs cookie-web --since 2h 2>&1 | grep -i cleanup
