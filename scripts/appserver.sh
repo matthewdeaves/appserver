@@ -2268,7 +2268,7 @@ cmd_setup_lock() {
   if ! command -v git-crypt &>/dev/null; then
     die "git-crypt not found."
   fi
-  git-crypt lock
+  git-crypt lock --force
   echo "Locked — encrypted files are now opaque."
 }
 
