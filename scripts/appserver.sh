@@ -956,7 +956,7 @@ cmd_app_init() {
   echo "$app initialized. Next steps:"
   echo "  1. appserver app deploy $app"
   echo "  2. Visit https://$app.$domain"
-  echo "  3. Register your first passkey (first user becomes admin)"
+  echo "  3. Register your first passkey (all users are peers — no admin tier in v1.43.0+)"
 }
 
 # Check Cloudflare IP ranges against traefik.yml trustedIPs.
@@ -1951,6 +1951,7 @@ cmd_threats_allow() {
   local rule_id
   rule_id=$(echo "$response" | jq -r '.result.id')
   echo "Allowlisted $ip (rule ID: $rule_id)"
+  echo "Reminder: run 'appserver threats unallow $ip' once the pentest scan completes."
 
   _track_action "allow_ip" "$ip" "$rule_id" "success" ""
 }
@@ -2287,6 +2288,99 @@ cmd_setup() {
   esac
 }
 
+# Top-level shortcut: list registered Cookie users (passkey accounts).
+cmd_users() {
+  local out
+  out=$(ssm_run "docker exec cookie-web python manage.py cookie_admin list-users --json 2>/dev/null" 30) \
+    || { echo "Could not reach Cookie. Is the instance running?" >&2; return 1; }
+
+  if ! echo "$out" | jq -e '.ok == true' >/dev/null 2>&1; then
+    echo "ERROR: cookie_admin list-users failed" >&2
+    echo "$out" >&2
+    return 1
+  fi
+
+  local count
+  count=$(echo "$out" | jq '.users | length')
+  echo "Cookie users ($count):"
+  echo
+  printf "%-16s %-8s %-10s %-10s %-12s %s\n" "Username" "User ID" "Passkeys" "Active" "Unlimited" "Joined"
+  printf "%-16s %-8s %-10s %-10s %-12s %s\n" "--------" "-------" "--------" "------" "---------" "------"
+  echo "$out" | jq -r '.users[] | [.username, .user_id, .passkeys, .is_active, .unlimited_ai, .date_joined] | @tsv' \
+    | while IFS=$'\t' read -r username user_id passkeys active unlimited joined; do
+        printf "%-16s %-8s %-10s %-10s %-12s %s\n" "$username" "$user_id" "$passkeys" "$active" "$unlimited" "$joined"
+      done
+}
+
+# Top-level shortcut: unified health summary across instance, containers, Cookie,
+# and the latest threat report. Designed for "is everything OK?" checks.
+cmd_health() {
+  echo "=== Instance ==="
+  local instance_id region instance_state
+  instance_id="$(get_instance_id)" || { echo "instance: unknown (terraform output unavailable)"; echo; }
+  region="$(get_region)"
+  if [[ -n "$instance_id" ]]; then
+    instance_state=$(aws ec2 describe-instances --instance-ids "$instance_id" --region "$region" \
+      --query 'Reservations[0].Instances[0].State.Name' --output text 2>/dev/null) \
+      || instance_state="unknown"
+    echo "state: $instance_state"
+  fi
+  echo
+
+  echo "=== Containers ==="
+  ssm_run "docker ps --format 'table {{.Names}}\t{{.Status}}'" 30 2>/dev/null \
+    || echo "could not reach instance"
+  echo
+
+  echo "=== Cookie ==="
+  local cookie_out
+  cookie_out=$(ssm_run "docker exec cookie-web python manage.py cookie_admin status --json 2>/dev/null && echo --- && docker ps --filter name=cookie-web --format '{{.Image}}' | sed 's/.*://'" 30 2>/dev/null) || cookie_out=""
+
+  if [[ -n "$cookie_out" ]]; then
+    local status_json version
+    status_json=$(echo "$cookie_out" | sed -n '1,/^---$/p' | sed '$d')
+    version=$(echo "$cookie_out" | sed -n '/^---$/,$p' | sed '1d' | head -1)
+
+    local ok db users passkeys auth_mode
+    ok=$(echo "$status_json" | jq -r '.ok // false' 2>/dev/null)
+    db=$(echo "$status_json" | jq -r '.database // "?"' 2>/dev/null)
+    users=$(echo "$status_json" | jq -r '.users.total // 0' 2>/dev/null)
+    passkeys=$(echo "$status_json" | jq -r '.passkeys // 0' 2>/dev/null)
+    auth_mode=$(echo "$status_json" | jq -r '.auth_mode // "?"' 2>/dev/null)
+
+    echo "version:    $version"
+    echo "status:     $([ "$ok" = "true" ] && echo "ok" || echo "DEGRADED")"
+    echo "database:   $db"
+    echo "auth mode:  $auth_mode"
+    echo "users:      $users (passkeys: $passkeys)"
+  else
+    echo "could not reach Cookie"
+  fi
+  echo
+
+  echo "=== Latest threat report ==="
+  local reports_dir="$SCRIPT_DIR/../reports/threats"
+  if [[ -d "$reports_dir" ]]; then
+    local latest
+    latest=$(find "$reports_dir" -maxdepth 1 -mindepth 1 -type d -printf '%f\n' 2>/dev/null | sort -r | head -1)
+    if [[ -n "$latest" && -f "$reports_dir/$latest/report.json" ]]; then
+      local rstatus rfindings rrecs rtime
+      rstatus=$(jq -r '.status' "$reports_dir/$latest/report.json")
+      rfindings=$(jq '.findings | length' "$reports_dir/$latest/report.json")
+      rrecs=$(jq '.recommendations | length' "$reports_dir/$latest/report.json")
+      rtime=$(jq -r '.timestamp' "$reports_dir/$latest/report.json")
+      echo "timestamp:       $rtime"
+      echo "status:          $rstatus"
+      echo "findings:        $rfindings"
+      echo "recommendations: $rrecs"
+    else
+      echo "no reports yet — run 'appserver threats' to generate one"
+    fi
+  else
+    echo "no reports yet — run 'appserver threats' to generate one"
+  fi
+}
+
 # --- Main ---
 
 check_dependencies
@@ -2297,6 +2391,8 @@ case "${1:-}" in
   deploy)   cmd_deploy ;;
   destroy)  cmd_destroy ;;
   status)   cmd_status ;;
+  health)   cmd_health ;;
+  users)    cmd_users ;;
   start)    cmd_start ;;
   stop)     cmd_stop ;;
   ssh)      cmd_ssh ;;
@@ -2334,6 +2430,8 @@ case "${1:-}" in
     echo
     echo "Instance:"
     echo "  status        Show running containers and resource usage"
+    echo "  health        Unified health summary (instance + containers + Cookie + last threat report)"
+    echo "  users         List Cookie users (passkey accounts)"
     echo "  start         Start EC2 instance"
     echo "  stop          Stop EC2 instance"
     echo "  ssh           SSM session to instance"
