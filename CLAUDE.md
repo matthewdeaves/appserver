@@ -13,8 +13,9 @@ terraform/              # All infrastructure (EC2, IAM, SG, tunnel, access, moni
 config/traefik/         # Traefik reverse proxy config + compose
 config/apps/            # Per-app Docker Compose files + env examples
 pentest/                # Penetration testing toolkit (invoke via /pentest skill)
-pentest/orchestrator/   # Python orchestrator — CLI, config, auth, module runner, results
-pentest/scripts/        # Bash module scripts (14 modules) + common.sh shared helpers
+pentest/hooks/          # Consumer hooks (preflight, auth-bootstrap, health-check, scan-summary)
+pentest/scripts/        # Cookie-only modules (ai, webauthn) — generic modules live in pentest-kit
+pentest/targets/        # Target YAMLs (cookie.yaml, appserver.yaml)
 pentest/hexstrike/      # HexStrike AI — agent-driven exploratory security testing (Docker)
 scripts/appserver.sh    # Admin CLI (init, deploy, status, app management)
 scripts/bootstrap.sh    # EC2 user_data (Docker, Traefik, cloudflared)
@@ -213,7 +214,7 @@ The `pentest/` directory contains a Python-orchestrated security testing toolkit
 ./pentest/pentest.sh report cookie           # Show latest report
 ```
 
-**Architecture**: `pentest.sh` is a thin bash wrapper (~90 lines) that handles sudo, CF Access curl injection, and terraform init, then delegates to a Python orchestrator (`pentest/orchestrator/`). The orchestrator handles CLI parsing, target YAML loading, SSM auth bootstrap, module execution, tag counting, results.json assembly, and report generation. Module scripts (14 bash files in `pentest/scripts/`) are the actual test logic — they source `common.sh` for shared helpers (`setup_csrf`, `setup_sleep`, `url_encode`, `json_get`).
+**Architecture**: `pentest.sh` is a ~90-line wrapper that resolves the pentest-kit clone, runs the consumer's `hooks/preflight.sh` (terraform/CF Access setup), then exec's the kit's orchestrator (`python3 -m pentest_kit.orchestrator`). The orchestrator (in `~/pentest-kit/pentest_kit/orchestrator/`) handles CLI parsing, target YAML loading, module discovery across kit + consumer scripts dirs, hook invocation (auth-bootstrap, health-check), module execution, results.json assembly, and report generation. 12 generic modules ship in the kit (`~/pentest-kit/pentest_kit/scripts/`); the 2 Cookie-specific modules (`ai.sh`, `webauthn.sh`) stay in `pentest/scripts/` and are picked up via PENTEST_SCRIPTS_DIRS (consumer-wins on collision). All modules source `common.sh` from the kit.
 
 #### Important Notes
 
@@ -221,12 +222,12 @@ The `pentest/` directory contains a Python-orchestrated security testing toolkit
 - Run `pentest/install.sh` once to install tools (nmap, ffuf, nuclei, testssl.sh, wordlists)
 - Target configs (`pentest/targets/*.yaml`) document all known endpoints, rate limits, and vulnerabilities
 - Reports are gitignored — findings stay local
-- 14 modules: recon, headers, tls, nikto, nuclei, api, auth, ai, injection, ssrf, infra, legacy, webauthn, paths
+- 14 modules total — 12 generic in `~/pentest-kit/pentest_kit/scripts/` (recon, headers, tls, nikto, nuclei, api, auth, injection, ssrf, infra, legacy, paths); 2 Cookie-specific in `pentest/scripts/` (ai, webauthn). Module discovery merges both via PENTEST_SCRIPTS_DIRS
 - Default rate: 50 req/s. Auth endpoints (`/api/auth/`) automatically use 2 req/s to stay under Cloudflare WAF rate limits (20 req/10s)
 - The `appserver` target auto-skips app-layer modules; use the `cookie` target for app testing
 - Report directory structure: `reports/<target>/<timestamp>/` with `results.json` (machine-readable), `SUMMARY.md` (human-readable), `run.log` (full transcript), `modules/` (per-module output), `tools/` (tool artifacts)
 - Use `/pentest-review` skill to review scan results; it prefers `results.json` for quick structured triage
-- Module scripts source `pentest/scripts/common.sh` for shared CSRF setup, sleep derivation, and payload loading
+- Module scripts source `common.sh` from the kit (`$PENTEST_KIT_DIR/pentest_kit/scripts/common.sh`) for shared CSRF setup, sleep derivation, payload loading, and the new `load_endpoints` helper
 - The orchestrator exports `HOSTNAME`, `API_BASE`, `TARGET_URL`, auth session IDs, and other env vars to module subprocesses
 
 ### HexStrike AI (Exploratory)
