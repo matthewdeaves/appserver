@@ -144,7 +144,7 @@ terraform/          Infrastructure (EC2, IAM, Cloudflare Tunnel/DNS/Access, WAF,
 config/traefik/     Traefik reverse proxy config + compose + HSTS middleware
 config/apps/        Per-app Docker Compose stacks + env examples
 scripts/            appserver.sh (admin CLI) + bootstrap.sh (EC2 user_data)
-pentest/            Penetration testing toolkit (14 modules, invoke via /pentest skill)
+pentest/            Cookie-specific config (target YAMLs, hooks, ai+webauthn modules); generic engine in pentest-kit (sibling clone), invoked via /pentest skill
 .github/            CI (terraform fmt/validate, tfsec, shellcheck, gitleaks, dependency-review)
 ```
 
