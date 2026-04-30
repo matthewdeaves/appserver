@@ -19,6 +19,10 @@ patterns=(
   '\.aws/credentials([^a-zA-Z0-9.]|$)'
   '\.aws/config([^a-zA-Z0-9.]|$)'
   '\.git-crypt/'
+  # bash xtrace leaks any sourced credentials (e.g. CLOUDFLARE_API_TOKEN
+  # exported by scripts/appserver.sh). Block xtrace flags entirely.
+  '(^|[[:space:]])bash[[:space:]]+-[a-zA-Z]*x'
+  '(^|[[:space:]])set[[:space:]]+-[a-zA-Z]*x'
 )
 
 for pat in "${patterns[@]}"; do
