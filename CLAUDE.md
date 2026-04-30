@@ -229,6 +229,7 @@ The `pentest/` directory contains a Python-orchestrated security testing toolkit
 - Use `/pentest-review` skill to review scan results; it prefers `results.json` for quick structured triage
 - Module scripts source `common.sh` from the kit (`$PENTEST_KIT_DIR/pentest_kit/scripts/common.sh`) for shared CSRF setup, sleep derivation, payload loading, and the new `load_endpoints` helper
 - The orchestrator exports `HOSTNAME`, `API_BASE`, `TARGET_URL`, auth session IDs, and other env vars to module subprocesses
+- **Running the harness from Claude Code**: use `Bash(..., run_in_background=True)` and wait for the single `task-notification { status: completed }` event. Do NOT use `Monitor` to watch harness PIDs — it creates a heartbeat feedback loop where each "still alive" notification prompts another Monitor spawn. See pentest-kit CLAUDE.md for details.
 
 ### HexStrike AI (Exploratory)
 
