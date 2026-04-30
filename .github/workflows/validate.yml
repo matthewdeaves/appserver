@@ -33,21 +33,21 @@ jobs:
       - name: Terraform Validate
         run: terraform -chdir=terraform validate
 
-      - name: Cookie version sync check
+      - name: Cookie version pin check
         run: |
           compose=config/apps/cookie/docker-compose.yml
           img=$(grep -oP 'cookie:\$\{COOKIE_VERSION:-\K[^}]+' "$compose")
-          env=$(grep -oP 'COOKIE_VERSION=\$\{COOKIE_VERSION:-\K[^}]+' "$compose")
-          if [ -z "$img" ] || [ -z "$env" ]; then
-            echo "Could not parse COOKIE_VERSION defaults in $compose" >&2
+          if [ -z "$img" ]; then
+            echo "Could not parse COOKIE_VERSION default in image tag in $compose" >&2
             exit 1
           fi
-          if [ "$img" != "$env" ]; then
-            echo "COOKIE_VERSION drift in $compose: image=$img env=$env" >&2
-            echo "Both defaults must match. See CLAUDE.md: 'compose default is authoritative'." >&2
+          if grep -qE 'COOKIE_VERSION=\$\{COOKIE_VERSION:-' "$compose"; then
+            echo "COOKIE_VERSION=\${COOKIE_VERSION:-...} env-var default found in $compose" >&2
+            echo "It must NOT be set here — version is baked into the image at build time." >&2
+            echo "See compose file comment for rationale." >&2
             exit 1
           fi
-          echo "COOKIE_VERSION in sync: $img"
+          echo "COOKIE_VERSION pinned to: $img"
 
       - name: ShellCheck scripts
         uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # v2.0.0
