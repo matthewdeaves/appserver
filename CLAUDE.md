@@ -185,6 +185,20 @@ shellcheck scripts/*.sh                             # Shell script linting
 
 Two complementary approaches: a **curated pentest suite** for deterministic regression testing and **HexStrike AI** for agent-driven exploratory testing.
 
+### Sibling pentest-kit dependency
+
+The harness scripts (`pentest/harness.sh` and `pentest/hexstrike/harness.sh`) are thin wrappers that delegate to [pentest-kit](https://github.com/matthewdeaves/pentest-kit) — a public library with the iteration loop, state management, and HexStrike Docker image. Clone it as a sibling:
+
+```bash
+git clone https://github.com/matthewdeaves/pentest-kit ~/pentest-kit
+```
+
+The wrappers resolve the kit via `$PENTEST_KIT_DIR` → `../pentest-kit` → `~/pentest-kit`. Override with `PENTEST_KIT_DIR=...` if you keep it elsewhere.
+
+**Don't `git pull` the kit while a scan is in flight** — behavior would shift mid-loop. If you need a stable kit version, pin a SHA in your wrapper (`cd ~/pentest-kit && git checkout <sha>`).
+
+The consumer-side artifacts (target YAMLs, hooks like `pentest/hooks/scan-summary.sh`, the appserver-specific HARNESS_PROMPT.md) live in this repo. Future migration phases will move more of `pentest/` (orchestrator, generic modules, payloads) into the kit.
+
 ### Curated Suite
 
 The `pentest/` directory contains a Python-orchestrated security testing toolkit with bash module scripts. Invoke via the `/pentest` skill.
