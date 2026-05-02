@@ -4,6 +4,10 @@ Docker app hosting on a single EC2 instance, routed by Traefik and exposed throu
 
 Currently hosting [Cookie](https://github.com/matthewdeaves/cookie), a recipe manager with passkey authentication.
 
+> This is the author's personal infrastructure repo, published as a worked example. It is MIT-licensed and forkable — see `CONTRIBUTING.md` for what kinds of changes land upstream and what's better forked. The `terraform.tfvars.example` and `./scripts/appserver.sh setup local` flow document everything you need to fill in for your own deployment.
+>
+> The repo is also a reference for **operating production infra with Claude Code as the agent**. See the *Blast-radius gates for Claude Code* section in `CLAUDE.md` for the layered hooks and IAM controls that gate destructive operations — written after reading about the [PocketOS / Cursor incident](https://www.tomshardware.com/tech-industry/artificial-intelligence/claude-powered-ai-coding-agent-deletes-entire-company-database-in-9-seconds-backups-zapped-after-cursor-tool-powered-by-anthropics-claude-goes-rogue) where an agent deleted a production database in 9 seconds.
+
 ## How It Works
 
 ```

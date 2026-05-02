@@ -245,6 +245,82 @@ cd pentest/hexstrike && docker compose up -d   # Start HexStrike container
 - Does not invoke pentest.sh, the orchestrator, or module scripts
 - Briefs are plain-text scope summaries (not derived from encrypted target YAMLs)
 
+## Blast-radius gates for Claude Code
+
+This repo is operated by Claude Code. The agent has broad shell access
+(SSM into a live EC2 instance, terraform apply, docker, AWS APIs) — the
+same blast radius that took down PocketOS in April 2026 when a Cursor +
+Claude agent hit a permissions error mid-task and "fixed" it by deleting
+the production database in 9 seconds. To prevent that class of failure
+here, several layers gate destructive operations:
+
+### Layer 1 — User-side approval (built-in)
+Claude Code's permission system asks before each Bash invocation unless
+the user has pre-approved the tool / mode. This is the primary gate; the
+hooks below exist because pre-approval is sometimes broad and "yes to
+all" is a real foot-gun.
+
+### Layer 2 — `block-credential-reads.sh` PreToolUse hook
+Catches `cat`/`grep`/`head`/`tail`/`sed`/`awk`/`less`/`jq` against
+credential paths inside shell commands (`terraform/.env`,
+`~/.aws/credentials`, `.git-crypt/`) and any `bash -x` / `set -x` xtrace
+flag (which would dump sourced secrets to stdout). Wired in
+`.claude/settings.json`.
+
+### Layer 3 — `block-destructive.sh` PreToolUse hook
+Denies irreversible verbs Claude is unlikely to need on its own:
+- **Filesystem**: `rm -rf` of `/`, `~`, `$HOME`, `.`, `..`; `dd of=/dev/sd*`; `mkfs`; `find /` `-delete`; `shred -u`
+- **Git**: force push, `reset --hard`, `filter-repo`/`filter-branch`, `branch -D main`, `clean -f`, `checkout -- .`, `--no-verify`, `--no-gpg-sign`
+- **Docker**: `volume rm`/`prune`, `system prune --volumes`, `rm -v`, `compose down -v`
+- **DB**: `DROP`/`TRUNCATE`/`dropdb`, `DELETE FROM <table>` without `WHERE`
+- **Terraform**: `destroy`, `state rm`, `apply -auto-approve`
+- **AWS**: `s3 rb`, `s3 rm --recursive`, IAM/EC2/RDS/Route53/KMS deletions
+- **SSM**: `aws ssm send-command` payload is recursively scanned for the verbs above (SSM is the way into the appserver instance — destructive payloads must be reviewed by a human)
+- **Project-specific**: `appserver.sh destroy`, `appserver.sh app remove`
+- **System**: `kill -9 1`, `shutdown`/`reboot`/`poweroff`/`halt`, fork bombs
+
+If the user really wants any of these, they run it themselves in their
+own shell — the hook only fires for Bash invocations made by Claude.
+
+### Layer 4 — `audit-bash.sh` PostToolUse hook
+Every Bash invocation Claude makes is appended to `.claude/audit.log`
+(gitignored, JSON Lines: timestamp, cwd, exit code, command). Forensic
+trail for "what did the agent run between healthy and broken?" Cheap
+context to feed back into Claude when investigating.
+
+### Layer 5 — `pentest-bash-gotchas.sh` and `pentest-shellcheck.sh`
+Pre/Post hooks that lint pentest module scripts at write time. Catch
+classes of shell bug (`((var++))` under `set -e`, `local` inside loops,
+`exit 1` on optional-tool-missing) before they ship.
+
+### Layer 6 — Project-level `permissions.deny`
+`.claude/settings.json` denies direct `Read`/`Edit` on
+`./terraform/.env`, `~/.aws/credentials`, and `~/.aws/config`. Hooks
+catch the shell-cmd path; this catches the tool-call path.
+
+### Layer 7 — Pre-destroy state snapshot
+`appserver.sh destroy` snapshots the active terraform state to
+`s3://<state-bucket>/state-snapshots/destroy-<UTC-timestamp>.tfstate`
+before running `terraform destroy`. Last-resort recovery if the destroy
+takes something out it shouldn't have.
+
+### Layer 8 — Least-privilege IAM
+The deployer IAM user has a managed-policy allowlist + an explicit deny
+on inline policies for the instance role. The instance role itself sits
+under a permissions boundary that caps effective permissions even if a
+broader policy is attached by mistake.
+
+### Principles
+1. **Reduce blast radius first.** A locked-down IAM principal is worth
+   ten lectures in CLAUDE.md.
+2. **Make the destructive path the explicit one.** If Claude has to
+   stop and ask the user to run `terraform destroy`, that's the gate
+   working.
+3. **Log everything.** When something does go wrong, the question is
+   always "what ran in the last 30 minutes?" — make that grep-able.
+4. **Hook bypasses are bugs in the hook.** If a destructive op slips
+   through, the answer is to add a pattern, not to disable the hook.
+
 ## Security Reviews
 
 Independent security reviews are tracked in GitHub issues #3 (infra) and #6 (app). Key design decisions:

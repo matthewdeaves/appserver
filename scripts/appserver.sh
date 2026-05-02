@@ -616,6 +616,19 @@ cmd_destroy() {
       -reconfigure \
       -input=false 2>&1 | mask_account_ids
 
+    # Snapshot state to S3 before destroy — last-resort recovery if the
+    # destroy goes wrong or wipes something we wanted to keep. Saved
+    # alongside the active state, prefixed by timestamp.
+    local snapshot_local snapshot_key
+    snapshot_local="$(mktemp -t tf-state-snapshot.XXXXXX.tfstate)"
+    snapshot_key="state-snapshots/destroy-$(date -u +%Y%m%dT%H%M%SZ).tfstate"
+    if terraform state pull > "$snapshot_local" 2>/dev/null && [[ -s "$snapshot_local" ]]; then
+      if aws s3 cp "$snapshot_local" "s3://$bucket/$snapshot_key" --region "$region" >/dev/null 2>&1; then
+        echo "State snapshot saved: s3://$bucket/$snapshot_key"
+      fi
+    fi
+    rm -f "$snapshot_local"
+
     # Disable EC2 termination protection before destroy (it blocks terraform destroy)
     local instance_id
     instance_id="$(terraform output -json instance_id 2>/dev/null | jq -r '.')" || true
@@ -2167,7 +2180,7 @@ cmd_setup_local() {
   [[ "$region" =~ ^[a-z]{2}-[a-z]+-[0-9]+$ ]] \
     || die "Invalid AWS region format: $region"
 
-  read -rp "Base domain (e.g. matthewdeaves.com): " domain
+  read -rp "Base domain (e.g. example.com): " domain
   [[ -n "$domain" ]] || die "Domain is required."
   [[ "$domain" =~ ^[a-z0-9][a-z0-9.-]+\.[a-z]{2,}$ ]] \
     || die "Invalid domain format: $domain"
@@ -2185,8 +2198,9 @@ cmd_setup_local() {
   read -rp "Cloudflare API Token: " cf_api_token
   [[ -n "$cf_api_token" ]] || die "API Token is required."
 
-  read -rp "Admin email [matt@matthewdeaves.com]: " email
-  email="${email:-matt@matthewdeaves.com}"
+  read -rp "Admin email [you@example.com]: " email
+  email="${email:-you@example.com}"
+  [[ "$email" != "you@example.com" ]] || die "Admin email must be set — placeholder rejected."
   [[ "$email" =~ ^[^@]+@[^@]+\.[^@]+$ ]] \
     || die "Invalid email format: $email"
 
