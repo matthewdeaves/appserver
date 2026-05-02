@@ -66,6 +66,7 @@ cd appserver
 
 aws configure --profile appserver        # Paste deployer access key + secret, region (eu-west-2), json
 ./scripts/appserver.sh setup local       # Interactive prompts → writes terraform/.env + tfvars (no AWS admin)
+./scripts/install-git-hooks.sh           # Local pre-commit gitleaks scan (requires gitleaks installed)
 ```
 
 Check whether live infra exists:
@@ -149,7 +150,8 @@ config/traefik/     Traefik reverse proxy config + compose + HSTS middleware
 config/apps/        Per-app Docker Compose stacks + env examples
 scripts/            appserver.sh (admin CLI) + bootstrap.sh (EC2 user_data)
 pentest/            Cookie-specific config (target YAMLs, hooks, ai+webauthn modules); generic engine in pentest-kit (sibling clone), invoked via /pentest skill
-.github/            CI (terraform fmt/validate, tfsec, shellcheck, gitleaks, dependency-review)
+.claude/            Claude Code config: blast-radius hooks (block-destructive, block-credential-reads, block-webfetch), audit-bash, hook self-test harness
+.github/            CI: terraform fmt/validate, tfsec, shellcheck, gitleaks, dependency-review, hook self-test
 ```
 
 ## Security
@@ -158,4 +160,4 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting and security review f
 
 ## License
 
-Private repository. All rights reserved.
+[MIT](LICENSE). See `CONTRIBUTING.md` for upstream-vs-fork guidance.
