@@ -1,0 +1,34 @@
+# pre-commit hooks for appserver
+#
+# Install once per clone:
+#   pip install pre-commit  (or pipx install pre-commit)
+#   pre-commit install
+#
+# Then `git commit` will run these checks on staged changes. CI
+# (.github/workflows/validate.yml) runs the same gitleaks scan plus
+# more — local pre-commit is for fast feedback, not the only gate.
+
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.34.6
+    hooks:
+      - id: gitleaks
+        # Honour the repo's config (allowlists RFC 6455 example nonce).
+        args: ['--config=.gitleaks.toml']
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        files: ^(scripts|\.claude/hooks)/.*\.sh$
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=1024']
+      - id: check-json
+      - id: check-yaml
+        # Skip the encrypted target YAMLs — git-crypt smudge handles them.
+        exclude: ^pentest/targets/.*\.yaml$

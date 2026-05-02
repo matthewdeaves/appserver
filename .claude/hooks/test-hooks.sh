@@ -213,6 +213,65 @@ assert_allow "$HOOK" "curl GET ; PATCH"   "$(bash_payload 'curl https://example.
 assert_deny "$HOOK" "tf apply -auto-approve" "$(bash_payload 'terraform apply -auto-approve')" "skips review"
 assert_deny "$HOOK" "compose down -v same" "$(bash_payload 'docker compose down -v')" "named volumes"
 
+# --- real-world CLI workflows must NOT be falsely blocked ---------------
+# appserver.sh subcommands the agent runs routinely.
+assert_allow "$HOOK" "appserver status"   "$(bash_payload './scripts/appserver.sh status')"
+assert_allow "$HOOK" "appserver deploy"   "$(bash_payload './scripts/appserver.sh deploy')"
+assert_allow "$HOOK" "appserver start"    "$(bash_payload './scripts/appserver.sh start')"
+assert_allow "$HOOK" "appserver stop"     "$(bash_payload './scripts/appserver.sh stop')"
+assert_allow "$HOOK" "appserver ssh"      "$(bash_payload './scripts/appserver.sh ssh')"
+assert_allow "$HOOK" "appserver logs"     "$(bash_payload './scripts/appserver.sh logs cookie')"
+assert_allow "$HOOK" "appserver spend"    "$(bash_payload './scripts/appserver.sh spend')"
+assert_allow "$HOOK" "appserver app init" "$(bash_payload './scripts/appserver.sh app init cookie')"
+assert_allow "$HOOK" "appserver app deploy" "$(bash_payload './scripts/appserver.sh app deploy cookie')"
+assert_allow "$HOOK" "appserver app list" "$(bash_payload './scripts/appserver.sh app list')"
+assert_allow "$HOOK" "appserver app restart" "$(bash_payload './scripts/appserver.sh app restart cookie')"
+assert_allow "$HOOK" "appserver app env" "$(bash_payload './scripts/appserver.sh app env cookie')"
+assert_allow "$HOOK" "appserver config push" "$(bash_payload './scripts/appserver.sh config push')"
+assert_allow "$HOOK" "appserver config check-ips" "$(bash_payload './scripts/appserver.sh config check-ips')"
+assert_allow "$HOOK" "appserver threats"  "$(bash_payload './scripts/appserver.sh threats --since 1h')"
+assert_allow "$HOOK" "appserver threats block" "$(bash_payload './scripts/appserver.sh threats block 1.2.3.4')"
+assert_allow "$HOOK" "appserver threats allow" "$(bash_payload './scripts/appserver.sh threats allow')"
+assert_allow "$HOOK" "appserver setup unlock" "$(bash_payload './scripts/appserver.sh setup unlock')"
+assert_allow "$HOOK" "appserver setup lock" "$(bash_payload './scripts/appserver.sh setup lock')"
+# Pentest workflows.
+assert_allow "$HOOK" "pentest run cookie" "$(bash_payload './pentest/pentest.sh run cookie')"
+assert_allow "$HOOK" "pentest run-all"    "$(bash_payload './pentest/pentest.sh run-all')"
+assert_allow "$HOOK" "pentest module"     "$(bash_payload './pentest/pentest.sh run cookie --module ssrf')"
+# Terraform read-only ops (apply without -auto-approve goes through Layer 1).
+assert_allow "$HOOK" "tf init"            "$(bash_payload 'terraform -chdir=terraform init')"
+assert_allow "$HOOK" "tf plan"            "$(bash_payload 'terraform -chdir=terraform plan')"
+assert_allow "$HOOK" "tf validate"        "$(bash_payload 'terraform -chdir=terraform validate')"
+assert_allow "$HOOK" "tf fmt"             "$(bash_payload 'terraform -chdir=terraform fmt -check -recursive')"
+assert_allow "$HOOK" "tf state list"      "$(bash_payload 'terraform state list')"
+assert_allow "$HOOK" "tf state show"      "$(bash_payload 'terraform state show aws_instance.foo')"
+# Cookie admin via SSM — these must pass through; they all run inside
+# the cookie-web container as benign read/admin ops.
+assert_allow "$HOOK" "cookie status"      "$(bash_payload 'docker exec cookie-web python manage.py cookie_admin status --json')"
+assert_allow "$HOOK" "cookie list-users"  "$(bash_payload 'docker exec cookie-web python manage.py cookie_admin list-users --json')"
+assert_allow "$HOOK" "cookie set-unlimited" "$(bash_payload 'docker exec cookie-web python manage.py cookie_admin set-unlimited matt --json')"
+assert_allow "$HOOK" "cookie audit"       "$(bash_payload 'docker exec cookie-web python manage.py cookie_admin audit --json')"
+assert_allow "$HOOK" "cookie sources"     "$(bash_payload 'docker exec cookie-web python manage.py cookie_admin sources list --json')"
+assert_allow "$HOOK" "cookie quota show"  "$(bash_payload 'docker exec cookie-web python manage.py cookie_admin quota show --json')"
+# Routine git ops the agent does daily.
+assert_allow "$HOOK" "git pull"           "$(bash_payload 'git pull --ff-only')"
+assert_allow "$HOOK" "git fetch"          "$(bash_payload 'git fetch --all')"
+assert_allow "$HOOK" "git tag annotated"  "$(bash_payload "git tag -a v1.0.0 -m 'release'")"
+assert_allow "$HOOK" "git checkout main"  "$(bash_payload 'git checkout main')"
+assert_allow "$HOOK" "git checkout file"  "$(bash_payload 'git checkout main file.txt')"
+assert_allow "$HOOK" "git stash"          "$(bash_payload 'git stash push -m wip')"
+# Docker read ops.
+assert_allow "$HOOK" "docker ps"          "$(bash_payload 'docker ps')"
+assert_allow "$HOOK" "docker logs"        "$(bash_payload 'docker logs cookie-web --tail 100')"
+assert_allow "$HOOK" "docker exec ls"     "$(bash_payload 'docker exec cookie-web ls /app')"
+assert_allow "$HOOK" "compose up -d"      "$(bash_payload 'docker compose up -d')"
+assert_allow "$HOOK" "compose down (no v)" "$(bash_payload 'docker compose down')"
+assert_allow "$HOOK" "compose pull"       "$(bash_payload 'docker compose pull')"
+# AWS read ops via SSM (non-destructive payloads).
+assert_allow "$HOOK" "ssm get-cmd"        "$(bash_payload 'aws ssm send-command --document-name AWS-RunShellScript --instance-ids i-x --parameters commands=["docker ps"]')"
+assert_allow "$HOOK" "ssm cookie status"  "$(bash_payload 'aws ssm send-command --document-name AWS-RunShellScript --instance-ids i-x --parameters commands=["docker exec cookie-web python manage.py cookie_admin status --json"]')"
+assert_allow "$HOOK" "ssm config check"  "$(bash_payload 'aws ssm send-command --document-name AWS-RunShellScript --instance-ids i-x --parameters commands=["docker logs cookie-web --tail 50"]')"
+
 # ============================================================================
 # block-credential-reads.sh
 # ============================================================================

@@ -86,3 +86,6 @@ jobs:
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Honours .gitleaks.toml at repo root (allowlists RFC 6455
+          # example nonce in the pentest WebSocket-probe module).
+          GITLEAKS_CONFIG: .gitleaks.toml

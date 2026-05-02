@@ -1,0 +1,35 @@
+# gitleaks config for appserver
+# Used both locally (via the pre-commit hook in .pre-commit-config.yaml)
+# and in CI (gitleaks/gitleaks-action in .github/workflows/validate.yml).
+#
+# Extends the default ruleset; adds repo-specific allowlists for
+# patterns that look like secrets but aren't.
+
+title = "appserver gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Repo-specific false positives"
+# Match against the full matched line, not just the captured secret —
+# lets us keep the regex anchored to context (e.g. the WebSocket-Key
+# header below) rather than allowlisting a bare base64 string that
+# would shadow real secrets.
+regexTarget = "match"
+
+# Per-finding regex allowlist. Keep these tight — broad allowlists
+# are how real secrets sneak in.
+regexes = [
+  # RFC 6455 example WebSocket-handshake nonce, used by the pentest
+  # WebSocket-upgrade probe. Public, fixed value, not a credential.
+  '''Sec-WebSocket-Key:\s*dGhlIHNhbXBsZSBub25jZQ==''',
+]
+
+# Paths excluded entirely. Reserve for examples / templates / lockfiles
+# that gitleaks cannot meaningfully reason about.
+paths = [
+  '''terraform/\.terraform\.lock\.hcl''',
+  '''.*\.example$''',
+  '''.*\.example\.[a-zA-Z]+$''',
+]
