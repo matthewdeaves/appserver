@@ -100,6 +100,12 @@ assert_deny "$HOOK" "find / -delete"      "$(bash_payload 'find / -name foo -del
 assert_deny "$HOOK" "git reset --hard"    "$(bash_payload 'git reset --hard HEAD')" "discards"
 assert_deny "$HOOK" "force push"          "$(bash_payload 'git push origin main --force')" "force push"
 assert_deny "$HOOK" "force-with-lease"    "$(bash_payload 'git push origin main --force-with-lease')" "force push"
+# Regression: a -f flag in a *different* command after && / ; / | must not
+# be misread as a force-push flag of the preceding `git push`.
+assert_allow "$HOOK" "push && rm -f"      "$(bash_payload 'git push origin main && rm -f /tmp/msg.txt')"
+assert_allow "$HOOK" "push ; echo -f"     "$(bash_payload 'git push origin main; echo -f flag-passed')"
+assert_allow "$HOOK" "push | grep -f"     "$(bash_payload 'git push origin main 2>&1 | grep -f file')"
+assert_deny "$HOOK" "push origin -f"      "$(bash_payload 'git push origin main -f')" "force push"
 assert_deny "$HOOK" "filter-repo"         "$(bash_payload 'git filter-repo --force')" "rewrites"
 assert_deny "$HOOK" "branch -D main"      "$(bash_payload 'git branch -D main')" "protected"
 assert_deny "$HOOK" "git clean -fdx"      "$(bash_payload 'git clean -fdx')" "untracked"
@@ -192,6 +198,20 @@ assert_allow "$HOOK" "ssm send-cmd benign" "$(bash_payload 'aws ssm send-command
 assert_allow "$HOOK" "iam list-roles"     "$(bash_payload 'aws iam list-roles')"
 assert_allow "$HOOK" "ec2 describe"       "$(bash_payload 'aws ec2 describe-instances')"
 assert_allow "$HOOK" "iam list-keys"      "$(bash_payload 'aws iam list-access-keys --user-name x')"
+
+# --- regressions for shell-boundary false-positives ---------------------
+# `.*` would otherwise greedily span && / ; / | between two unrelated
+# commands and trigger as if the second command's flag belonged to the
+# first.
+assert_allow "$HOOK" "tf plan && s3 --rec" "$(bash_payload 'terraform -chdir=terraform plan && aws s3 ls --recursive s3://x')"
+assert_allow "$HOOK" "compose down ; cat -v" "$(bash_payload 'docker compose down; cat -v file.txt')"
+assert_allow "$HOOK" "tf plan ; echo destroy" "$(bash_payload 'terraform plan; echo destroy')"
+assert_allow "$HOOK" "system prune (no v)"  "$(bash_payload 'docker system prune')"
+assert_allow "$HOOK" "tf apply (no auto)"  "$(bash_payload 'terraform apply tfplan')"
+assert_allow "$HOOK" "curl GET ; PATCH"   "$(bash_payload 'curl https://example.com/x; curl -X PATCH https://example.org/y')"
+# Still deny when both verbs are in the same command segment.
+assert_deny "$HOOK" "tf apply -auto-approve" "$(bash_payload 'terraform apply -auto-approve')" "skips review"
+assert_deny "$HOOK" "compose down -v same" "$(bash_payload 'docker compose down -v')" "named volumes"
 
 # ============================================================================
 # block-credential-reads.sh

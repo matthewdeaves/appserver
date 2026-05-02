@@ -83,11 +83,16 @@ add_pat all \
 # --force-with-lease is also blocked: with-lease refuses if upstream
 # moved, but it still rewrites your own commits, so it remains a
 # Layer-1 user-decision call.
+#
+# `.*` would greedily span shell separators (`&&`, `||`, `;`, `|`) and
+# match `-f` from a totally different command — e.g. `git push origin
+# main && rm -f /tmp/x` would trigger on the `rm -f`. `[^&;|]*`
+# constrains the match to the same shell command.
 add_pat host-only \
-  'git[[:space:]]+(.*[[:space:]])?push[[:space:]]+.*(--force([[:space:]]|=|$)|--force-with-lease)' \
+  'git[[:space:]]+([^&;|]*[[:space:]])?push[[:space:]]+[^&;|]*(--force([[:space:]]|=|$)|--force-with-lease)' \
   'force push (incl. --force-with-lease) rewrites remote history'
 add_pat host-only \
-  'git[[:space:]]+(.*[[:space:]])?push[[:space:]]+.*-[a-zA-Z]*f([[:space:]]|$)' \
+  'git[[:space:]]+([^&;|]*[[:space:]])?push[[:space:]]+[^&;|]*-[a-zA-Z]*f([[:space:]]|$)' \
   'force push (-f) rewrites remote history'
 add_pat host-only \
   'git[[:space:]]+reset[[:space:]]+--hard' \
@@ -113,12 +118,12 @@ add_pat host-only \
   'git[[:space:]]+remote[[:space:]]+(remove|rm|set-url)' \
   'git remote remove/set-url can re-route origin to an attacker URL'
 add_pat host-only \
-  'git[[:space:]]+push[[:space:]]+.*--delete([[:space:]]|$)' \
+  'git[[:space:]]+push[[:space:]]+[^&;|]*--delete([[:space:]]|$)' \
   'git push --delete removes a remote ref'
 # More-specific tag-delete patterns must come before the generic
 # colon-branch pattern, which would otherwise swallow `:refs/tags/`.
 add_pat host-only \
-  'git[[:space:]]+push[[:space:]]+.*:refs/tags/' \
+  'git[[:space:]]+push[[:space:]]+[^&;|]*:refs/tags/' \
   'git push :refs/tags/X deletes a remote tag'
 add_pat host-only \
   'git[[:space:]]+push[[:space:]]+[^[:space:]]+[[:space:]]+:[a-zA-Z]' \
@@ -143,13 +148,13 @@ add_pat all \
   'docker[[:space:]]+volume[[:space:]]+(rm|prune)' \
   'docker volume rm/prune wipes persistent app data'
 add_pat all \
-  'docker[[:space:]]+system[[:space:]]+prune.*--volumes' \
+  'docker[[:space:]]+system[[:space:]]+prune[^&;|]*--volumes' \
   'docker system prune --volumes wipes persistent app data'
 add_pat all \
-  'docker[[:space:]]+(.*[[:space:]])?rm[[:space:]]+(-[a-zA-Z]*v|--volumes)' \
+  'docker[[:space:]]+([^&;|]*[[:space:]])?rm[[:space:]]+(-[a-zA-Z]*v|--volumes)' \
   'docker rm -v removes the container AND its volumes'
 add_pat all \
-  'docker[[:space:]]+compose[[:space:]]+down[[:space:]]+.*(-v|--volumes)' \
+  'docker[[:space:]]+compose[[:space:]]+down[[:space:]]+[^&;|]*(-v|--volumes)' \
   'docker compose down -v removes named volumes'
 
 # --- Database destruction -----------------------------------------------
@@ -165,13 +170,13 @@ add_pat all \
 
 # --- Terraform destruction (operator host only) ------------------------
 add_pat host-only \
-  'terraform[[:space:]]+(.*[[:space:]])?destroy([[:space:]]|$)' \
+  'terraform[[:space:]]+([^&;|]*[[:space:]])?destroy([[:space:]]|$)' \
   'terraform destroy tears down infra'
 add_pat host-only \
-  'terraform[[:space:]]+(.*[[:space:]])?state[[:space:]]+rm' \
+  'terraform[[:space:]]+([^&;|]*[[:space:]])?state[[:space:]]+rm' \
   'terraform state rm desyncs state from infra'
 add_pat host-only \
-  'terraform[[:space:]]+(.*[[:space:]])?apply[[:space:]]+.*-auto-approve' \
+  'terraform[[:space:]]+([^&;|]*[[:space:]])?apply[[:space:]]+[^&;|]*-auto-approve' \
   'terraform apply -auto-approve skips review'
 
 # --- AWS destruction ----------------------------------------------------
@@ -179,7 +184,7 @@ add_pat all \
   'aws[[:space:]]+s3[[:space:]]+rb([[:space:]]|$)' \
   'aws s3 rb deletes a bucket'
 add_pat all \
-  'aws[[:space:]]+s3[[:space:]]+rm[[:space:]]+.*--recursive' \
+  'aws[[:space:]]+s3[[:space:]]+rm[[:space:]]+[^&;|]*--recursive' \
   'aws s3 rm --recursive deletes every object under a prefix'
 add_pat all \
   'aws[[:space:]]+s3api[[:space:]]+(delete-bucket|delete-objects)' \
@@ -210,7 +215,7 @@ add_pat all \
   'cloudflared[[:space:]]+access[[:space:]]+(login|token)[[:space:]]+(revoke|delete)' \
   'cloudflared access revoke locks operators out'
 add_pat all \
-  'curl[[:space:]]+.*-X[[:space:]]+(DELETE|PATCH)[[:space:]]+.*api\.cloudflare\.com' \
+  'curl[[:space:]]+[^&;|]*-X[[:space:]]+(DELETE|PATCH)[[:space:]]+[^&;|]*api\.cloudflare\.com' \
   'direct CF API DELETE/PATCH bypasses appserver.sh threat-ops'
 
 # --- Appserver-specific destructive ops --------------------------------
