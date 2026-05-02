@@ -41,7 +41,7 @@ resource "cloudflare_zero_trust_access_application" "protected_app" {
   zone_id              = var.cloudflare_zone_id
   name                 = each.key
   type                 = "self_hosted"
-  session_duration     = "24h"
+  session_duration     = "8760h"
   app_launcher_visible = false
 
   destinations = [{
