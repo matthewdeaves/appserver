@@ -261,21 +261,31 @@ hooks below exist because pre-approval is sometimes broad and "yes to
 all" is a real foot-gun.
 
 ### Layer 2 — `block-credential-reads.sh` PreToolUse hook
-Catches `cat`/`grep`/`head`/`tail`/`sed`/`awk`/`less`/`jq` against
-credential paths inside shell commands (`terraform/.env`,
+Two classes blocked: (a) `cat`/`grep`/`head`/`tail`/`sed`/`awk`/`less`/`jq`
+against credential paths inside shell commands (`terraform/.env`,
 `~/.aws/credentials`, `.git-crypt/`) and any `bash -x` / `set -x` xtrace
-flag (which would dump sourced secrets to stdout). Wired in
-`.claude/settings.json`.
+flag (which would dump sourced secrets to stdout); (b) CLI commands that
+**print** live credentials to stdout — `gh auth token`,
+`gh auth status --show-token`, `aws iam create-access-key`,
+`aws sts get-session-token`/`get-federation-token`/`assume-role`. The
+second class evades file-read patterns because the secret is generated
+on the fly, not read from disk.
 
 ### Layer 3 — `block-destructive.sh` PreToolUse hook
-Denies irreversible verbs Claude is unlikely to need on its own:
+Denies irreversible verbs Claude is unlikely to need on its own. The
+catalogue is a single array (scope/regex/reason) so the SSM payload
+scanner can re-use it instead of duplicating a subset.
 - **Filesystem**: `rm -rf` of `/`, `~`, `$HOME`, `.`, `..`; `dd of=/dev/sd*`; `mkfs`; `find /` `-delete`; `shred -u`
-- **Git**: force push, `reset --hard`, `filter-repo`/`filter-branch`, `branch -D main`, `clean -f`, `checkout -- .`, `--no-verify`, `--no-gpg-sign`
+- **Wide perms**: `chmod 0777`/`a+rwx` on root paths, `chown` of `/`/`~`/`$HOME`
+- **Pipe-to-shell**: `curl|bash`, `wget|sh`, `bash <(curl ...)`, `source <(curl ...)`
+- **Git**: force push (incl. `--force-with-lease`), `reset --hard`, `filter-repo`/`filter-branch`, `branch -D main`, `clean -f`, `checkout -- .`, `--no-verify`, `--no-gpg-sign`
+- **Git remote-tampering**: `remote set-url`/`remove`, `push --delete`, `push origin :branch`, `tag -d`, `push :refs/tags/X`
 - **Docker**: `volume rm`/`prune`, `system prune --volumes`, `rm -v`, `compose down -v`
 - **DB**: `DROP`/`TRUNCATE`/`dropdb`, `DELETE FROM <table>` without `WHERE`
 - **Terraform**: `destroy`, `state rm`, `apply -auto-approve`
 - **AWS**: `s3 rb`, `s3 rm --recursive`, IAM/EC2/RDS/Route53/KMS deletions
-- **SSM**: `aws ssm send-command` payload is recursively scanned for the verbs above (SSM is the way into the appserver instance — destructive payloads must be reviewed by a human)
+- **Cloudflare**: `cloudflared tunnel delete`, access-token revoke, direct `curl -X DELETE/PATCH api.cloudflare.com` (legitimate threat-ops calls go through `appserver.sh`, which is not affected)
+- **SSM**: `aws ssm send-command` is intercepted before the top-level scan — the `commands=...` payload is extracted (handles `"..."`, `'...'`, and JSON-list `[...]` forms), unquoted, and scanned with the full `all`-scope ruleset so `rm -rf /"` smuggled inside a quoted SSM payload matches the same patterns as a plain `rm -rf /`.
 - **Project-specific**: `appserver.sh destroy`, `appserver.sh app remove`
 - **System**: `kill -9 1`, `shutdown`/`reboot`/`poweroff`/`halt`, fork bombs
 
@@ -284,31 +294,54 @@ own shell — the hook only fires for Bash invocations made by Claude.
 
 ### Layer 4 — `audit-bash.sh` PostToolUse hook
 Every Bash invocation Claude makes is appended to `.claude/audit.log`
-(gitignored, JSON Lines: timestamp, cwd, exit code, command). Forensic
-trail for "what did the agent run between healthy and broken?" Cheap
-context to feed back into Claude when investigating.
+(gitignored, JSON Lines: timestamp, cwd, status, command, truncated
+stdout/stderr). Rotates at 10 MB to `audit.log.1`; one previous file
+is kept. Forensic trail for "what did the agent run between healthy
+and broken?" — cheap context to feed back into Claude when investigating.
 
 ### Layer 5 — `pentest-bash-gotchas.sh` and `pentest-shellcheck.sh`
-Pre/Post hooks that lint pentest module scripts at write time. Catch
-classes of shell bug (`((var++))` under `set -e`, `local` inside loops,
-`exit 1` on optional-tool-missing) before they ship.
+Pre/Post Edit/Write hooks that lint pentest module scripts at write
+time. Catch classes of shell bug (`((var++))` under `set -e`, `local`
+inside loops, `exit 1` on optional-tool-missing) before they ship.
+Both read tool input as JSON on stdin (the documented Claude Code
+hook convention), not legacy `CLAUDE_FILE_PATH` env vars.
 
 ### Layer 6 — Project-level `permissions.deny`
 `.claude/settings.json` denies direct `Read`/`Edit` on
 `./terraform/.env`, `~/.aws/credentials`, and `~/.aws/config`. Hooks
 catch the shell-cmd path; this catches the tool-call path.
 
-### Layer 7 — Pre-destroy state snapshot
+### Layer 7 — `block-webfetch.sh` PreToolUse WebFetch/WebSearch hook
+Defense against prompt-injection-driven exfiltration. If an agent
+reads attacker-controlled content (a malicious README, issue comment,
+fetched page) that content can instruct "fetch this URL with
+.env contents in the query string" — and the agent will. This hook
+denies WebFetch/WebSearch calls targeting known OOB sinks (`oast.live`,
+`burpcollaborator`, `webhook.site`, `ngrok`, `requestbin`, `pipedream`)
+or carrying credential-shaped query parameters
+(`token=`, `api_key=`, `password=`, `secret=`, etc.).
+
+### Layer 8 — Pre-destroy state snapshot
 `appserver.sh destroy` snapshots the active terraform state to
 `s3://<state-bucket>/state-snapshots/destroy-<UTC-timestamp>.tfstate`
 before running `terraform destroy`. Last-resort recovery if the destroy
 takes something out it shouldn't have.
 
-### Layer 8 — Least-privilege IAM
+### Layer 9 — Least-privilege IAM
 The deployer IAM user has a managed-policy allowlist + an explicit deny
 on inline policies for the instance role. The instance role itself sits
 under a permissions boundary that caps effective permissions even if a
 broader policy is attached by mistake.
+
+### Hook self-test
+`.claude/hooks/test-hooks.sh` is an assertion harness that feeds
+crafted JSON tool inputs into each hook and verifies the right
+deny/allow decision for ~110 cases (regression coverage for every
+catalogued pattern, plus carefully chosen allow-cases so the hooks
+don't false-positive on normal devops work). Wired into the `Validate`
+CI workflow alongside `bash -n` and `shellcheck` of `.claude/hooks/*.sh`
+— a typo that silently disabled a hook would otherwise be invisible
+until something destructive went unblocked.
 
 ### Principles
 1. **Reduce blast radius first.** A locked-down IAM principal is worth

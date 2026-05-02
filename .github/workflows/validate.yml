@@ -54,6 +54,15 @@ jobs:
         with:
           scandir: scripts/
 
+      - name: Validate Claude hooks
+        run: |
+          set -euo pipefail
+          for f in .claude/hooks/*.sh; do
+            bash -n "$f"
+          done
+          shellcheck .claude/hooks/*.sh
+          bash .claude/hooks/test-hooks.sh
+
       - name: ShellCheck pentest
         uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # v2.0.0
         env:
