@@ -240,7 +240,7 @@ MIDDLEWARE
   cat > /opt/appserver/traefik/docker-compose.yml <<'COMPOSE'
 services:
   traefik:
-    image: traefik:v3.4.0
+    image: traefik:v3.6.15
     container_name: traefik
     restart: unless-stopped
     ports:

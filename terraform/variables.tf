@@ -123,13 +123,13 @@ variable "force_destroy" {
 variable "docker_compose_version" {
   description = "Docker Compose version to install (pinned for stability)"
   type        = string
-  default     = "v5.1.1"
+  default     = "v5.1.3"
 }
 
 variable "docker_compose_sha256" {
   description = "SHA256 hash of docker-compose-linux-aarch64 — must update when changing version"
   type        = string
-  default     = "4b5c42952b7dd81f508d01a771df2a9e5dbffe9b8c5c7d983e738504ad38f056"
+  default     = "e8105a3e687ea7e0b0f81abe4bf9269c8a2801fb72c2b498b5ff2472bc54145f"
 }
 
 variable "cloudflared_version" {

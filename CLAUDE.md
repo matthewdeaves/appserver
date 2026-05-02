@@ -166,7 +166,7 @@ shellcheck scripts/*.sh                             # Shell script linting
 - `app remove` preserves Docker volumes — delete manually if needed
 - Cookie image version is pinned in `docker-compose.yml` (single source of truth). To upgrade: update the version in compose, commit, `config push`, `app deploy`. Do NOT set `COOKIE_VERSION` in the instance `.env` — the compose default is authoritative
 - Cookie publishes multi-arch images (amd64 + arm64) via CD workflow on semantic version tags
-- Traefik is pinned to v3.4.0 with health check via `traefik healthcheck --ping`
+- Traefik is pinned to v3.6.15 with health check via `traefik healthcheck --ping`
 - Traefik forwards Cloudflare headers (CF-Connecting-IP, X-Forwarded-For) via `forwardedHeaders.trustedIPs` (Cloudflare IP ranges only)
 - Cloudflare IP ranges in traefik.yml can drift — run `config check-ips` periodically to audit, `--fix` to auto-sync
 - App names must be lowercase alphanumeric with hyphens — validated by the CLI
