@@ -42,6 +42,23 @@
       "Resource": "*"
     },
     {
+      "Sid": "SSMCommandsInstance",
+      "Effect": "Allow",
+      "Action": "ssm:SendCommand",
+      "Resource": "arn:aws:ec2:*:*:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "ssm:resourceTag/Project": "appserver"
+        }
+      }
+    },
+    {
+      "Sid": "SSMCommandsDocument",
+      "Effect": "Allow",
+      "Action": "ssm:SendCommand",
+      "Resource": "arn:aws:ssm:*::document/AWS-RunShellScript"
+    },
+    {
       "Sid": "SSMParameters",
       "Effect": "Allow",
       "Action": [

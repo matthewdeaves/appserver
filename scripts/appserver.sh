@@ -727,6 +727,7 @@ cmd_deploy() {
     -backend-config="use_lockfile=true" \
     -reconfigure \
     -input=false 2>&1 | mask_account_ids
+  [[ "${PIPESTATUS[0]}" -eq 0 ]] || die "terraform init failed"
 
   # Import orphaned artifacts bucket if it exists but isn't in state
   # (happens when a previous destroy deleted state but the bucket survived)
@@ -736,9 +737,11 @@ cmd_deploy() {
      && ! terraform state show aws_s3_bucket.artifacts &>/dev/null; then
     echo "Importing existing artifacts bucket into state..."
     terraform import aws_s3_bucket.artifacts "$artifacts_bucket" 2>&1 | mask_account_ids
+    [[ "${PIPESTATUS[0]}" -eq 0 ]] || die "terraform import failed"
   fi
 
   terraform apply -input=false -auto-approve 2>&1 | mask_account_ids
+  [[ "${PIPESTATUS[0]}" -eq 0 ]] || die "terraform apply failed — see output above. Artifacts NOT uploaded."
 
   echo
   echo "Uploading artifacts..."
@@ -771,6 +774,7 @@ cmd_destroy() {
       -backend-config="use_lockfile=true" \
       -reconfigure \
       -input=false 2>&1 | mask_account_ids
+    [[ "${PIPESTATUS[0]}" -eq 0 ]] || die "terraform init failed"
 
     # Snapshot state to S3 before destroy — last-resort recovery if the
     # destroy goes wrong or wipes something we wanted to keep. Saved
@@ -801,8 +805,10 @@ cmd_destroy() {
     terraform apply -input=false -auto-approve \
       -var "force_destroy=true" \
       -target="aws_s3_bucket.artifacts" 2>&1 | mask_account_ids
+    [[ "${PIPESTATUS[0]}" -eq 0 ]] || die "terraform apply (force_destroy) failed"
     terraform destroy -input=false -auto-approve \
       -var "force_destroy=true" 2>&1 | mask_account_ids
+    [[ "${PIPESTATUS[0]}" -eq 0 ]] || die "terraform destroy failed"
     echo "Infrastructure destroyed."
   else
     echo "State backend unavailable — skipping terraform destroy."

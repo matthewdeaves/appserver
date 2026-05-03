@@ -4,6 +4,67 @@ This is the operator's apply checklist for the rollout in `specs/003-iam-mfa-sco
 
 Work top-to-bottom. Stop at any step that produces an unexpected diff or error and surface it before continuing.
 
+## Status as of last session
+
+Mid-rollout, partial state already applied to AWS:
+
+- ✓ **Phase 1 + 2 + 5 IAM resources** all applied via `init` + `terraform apply` (the rollout collapsed because `init` is idempotent — it ends at the phase-5 state immediately).
+- ✓ MFA enrolled on `appserver-deployer` (TOTP device `appserver-deployer-iphone`, ARN in `terraform/.env`).
+- ✓ `appserver.sh auth --role readonly` works end-to-end (verified live).
+- ✓ `RockportDeployerIamSsm` policy detached from `rockport-admin` (was blocking `iam:AttachRolePolicy` on Appserver roles via cross-project deny — see "Rockport collision" below).
+- ⚠ `appserver.sh status` initially failed with "Could not reach instance" — readonly role lacked `ssm:SendCommand`. Fixed in a follow-up commit on the branch (next push).
+- ⚠ `cmd_deploy` swallowed terraform errors via pipe to `mask_account_ids`. Fixed with PIPESTATUS check on the same follow-up commit.
+
+Outstanding when you return:
+
+1. Pull the latest branch (`git pull` — the readonly fix + PIPESTATUS fix are in there).
+2. Smoke `appserver.sh status` again — should now print containers (the readonly policy now allows SendCommand to the tagged instance + AWS-RunShellScript document).
+3. Test cookie-ops escalation: `appserver.sh app deploy cookie` — first run should prompt MFA, subsequent runs reuse the cached cookie-ops session.
+4. Test deploy-role: `appserver.sh deploy` — same pattern.
+5. (Optional) Clean up the other Rockport policies still attached to `rockport-admin` (see "Rockport leftovers" below).
+6. Merge PR #10.
+
+## Bootstrap chicken-egg
+
+When `init` runs in the phase-5-collapsed state, the deployer user immediately ends up with only `AppserverDeployerAssumeRoles` — no broad permissions. The CLI's strict MFA check (also phase 5) then blocks `appserver.sh deploy` because the operator roles haven't been created yet via terraform.
+
+Use the escape hatch for the **first** terraform apply only:
+
+```bash
+unset AWS_PROFILE
+APPSERVER_AUTH_DISABLED=1 ./scripts/appserver.sh deploy
+```
+
+`APPSERVER_AUTH_DISABLED=1` skips `ensure_session_valid_for_role`. Admin creds (default credential chain) drive the apply. After this run, the operator roles exist and normal `appserver.sh auth` flow works for everything else.
+
+## Rockport collision
+
+`rockport-admin` had `RockportDeployerIamSsm` attached, which contained an explicit Deny on `iam:AttachRolePolicy` against any non-Rockport role. This blocked terraform from attaching Appserver* policies to the new operator roles. Fixed by detaching that one policy:
+
+```bash
+unset AWS_PROFILE
+aws iam detach-user-policy \
+  --user-name rockport-admin \
+  --policy-arn arn:aws:iam::453875232253:policy/RockportDeployerIamSsm
+```
+
+This was already done during the live session.
+
+### Rockport leftovers
+
+`rockport-admin` still has 4 Rockport-* policies attached (Rockport infra is currently destroyed):
+
+```
+RockportAdmin
+RockportDeployerCompute
+RockportDeployerMonitoringStorage
+RockportDeployerAccess
+```
+
+If you want to fully decouple from Rockport in this AWS account, detach them in the same way. They're inert with no Rockport infra running, so leaving them attached is harmless until you reanimate Rockport. If you ever do, the Rockport repo's `init` will reattach what it needs.
+
+If you want to keep them attached for the day Rockport comes back, also re-attach `RockportDeployerIamSsm` — but **first** widen its `iam:AttachRolePolicy` allowlist to include Appserver-prefix roles, otherwise it'll block our deploys again.
+
 ## Pre-flight (do this once)
 
 - [ ] Pull and check out the branch:
