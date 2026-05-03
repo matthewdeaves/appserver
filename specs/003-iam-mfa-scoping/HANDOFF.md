@@ -6,23 +6,26 @@ Work top-to-bottom. Stop at any step that produces an unexpected diff or error a
 
 ## Status as of last session
 
-Mid-rollout, partial state already applied to AWS:
+End-state applied to AWS, security review fixes folded in:
 
-- ✓ **Phase 1 + 2 + 5 IAM resources** all applied via `init` + `terraform apply` (the rollout collapsed because `init` is idempotent — it ends at the phase-5 state immediately).
+- ✓ **Phase 1 + 2 + 5 IAM resources** all applied via `init` + `terraform apply` (rollout collapsed because `init` is idempotent — ends at the phase-5 state immediately).
 - ✓ MFA enrolled on `appserver-deployer` (TOTP device `appserver-deployer-iphone`, ARN in `terraform/.env`).
 - ✓ `appserver.sh auth --role readonly` works end-to-end (verified live).
 - ✓ `RockportDeployerIamSsm` policy detached from `rockport-admin` (was blocking `iam:AttachRolePolicy` on Appserver roles via cross-project deny — see "Rockport collision" below).
-- ⚠ `appserver.sh status` initially failed with "Could not reach instance" — readonly role lacked `ssm:SendCommand`. Fixed in a follow-up commit on the branch (next push).
-- ⚠ `cmd_deploy` swallowed terraform errors via pipe to `mask_account_ids`. Fixed with PIPESTATUS check on the same follow-up commit.
+- ✓ **Security review Finding 1**: readonly role no longer has `ssm:SendCommand`. The 5 commands that need shell on the instance (`status`, `health`, `users`, `logs`, `app list`) now map to `cookie-ops` in `SUBCOMMAND_ROLE`. Pure-AWS reads (`spend`, `threats <list/report/blocked/allowed>`, `setup unlock`) stay on readonly.
+- ✓ **Security review Finding 2**: `appserver-operator-deploy-boundary` now contains a `DenyOperatorPolicyMutation` statement blocking `iam:CreatePolicyVersion` / `iam:DeletePolicyVersion` / `iam:SetDefaultPolicyVersion` / `iam:DeletePolicy` against the 4 init-managed deployer policies + 3 operator boundary policies. Deploy role can no longer rewrite its own bounding policies past the MFA-age window.
+- ✓ `cmd_deploy` PIPESTATUS exit-code propagation fixed.
 
 Outstanding when you return:
 
-1. Pull the latest branch (`git pull` — the readonly fix + PIPESTATUS fix are in there).
-2. Smoke `appserver.sh status` again — should now print containers (the readonly policy now allows SendCommand to the tagged instance + AWS-RunShellScript document).
-3. Test cookie-ops escalation: `appserver.sh app deploy cookie` — first run should prompt MFA, subsequent runs reuse the cached cookie-ops session.
-4. Test deploy-role: `appserver.sh deploy` — same pattern.
-5. (Optional) Clean up the other Rockport policies still attached to `rockport-admin` (see "Rockport leftovers" below).
-6. Merge PR #10.
+1. Pull the latest branch (`git pull`) on this and any other machine you operate from.
+2. Smoke `appserver.sh status` — first call now prompts MFA for **cookie-ops** (was readonly pre-fix), subsequent reuses cached.
+3. Smoke `appserver.sh app deploy cookie` — uses the same cached cookie-ops session.
+4. Smoke `appserver.sh deploy` — first deploy-role MFA prompt, then no-op `0 to add, 0 to change, 0 to destroy` plan.
+5. Verify the new deny works: `aws iam create-policy-version ...` against `appserver-operator-deploy-boundary` while holding a deploy-role STS session must fail with `ExplicitDeny`.
+6. (Optional) Clean up the other Rockport policies still attached to `rockport-admin` — see "Rockport cleanup" below.
+7. (Optional) Deactivate the orphan access key on `appserver-deployer` — only one of the two should be active.
+8. Tag `v0.2.0` and merge PR #10.
 
 ## Bootstrap chicken-egg
 

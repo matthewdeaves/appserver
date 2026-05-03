@@ -19,15 +19,16 @@ re-use cached sessions and prompt for re-auth on expiry.
 
 The CLI maps each subcommand to one of three operator roles:
 
-### `appserver-readonly-role` (diagnostic, default)
-- **Used for:** `status`, `health`, `users`, `logs`, `spend`, `app list`, `threats analyze` / `report` / `list` / `blocked` / `allowed`, `setup unlock`
-- **Permissions:** read-only AWS surface (Describe*, Get*, ListBucket on artifacts/state, no SendCommand, no IAM mutation)
+### `appserver-readonly-role` (pure AWS reads, default)
+- **Used for:** `spend`, `threats analyze` / `report` / `list` / `blocked` / `allowed`, `setup unlock`
+- **Permissions:** read-only AWS surface (Describe*, Get*, ListBucket on artifacts/state). NO SendCommand, NO StartSession, NO IAM mutation.
 - **MaxSessionDuration:** 1 hour
 
-### `appserver-cookie-ops-role` (app-layer mutations)
-- **Used for:** `app deploy`, `app init`, `app remove`, `app restart`, `app env`, `config push`, `threats block` / `unblock` / `allow` / `unallow`
+### `appserver-cookie-ops-role` (instance shell + app-layer mutations)
+- **Used for:** `status`, `health`, `users`, `logs`, `app list`, `app deploy`, `app init`, `app remove`, `app restart`, `app env`, `config push`, `threats block` / `unblock` / `allow` / `unallow`
 - **Permissions:** readonly + `ssm:SendCommand` and `ssm:StartSession` on the `Project=appserver`-tagged instance, parameter RW under `/appserver/*`
 - **MaxSessionDuration:** 1 hour
+- **Why status/logs/etc are here:** they all use `ssm send-command` to run shell on the instance. Even "read-only" shell commands are technically a write API and don't belong on readonly. See spec security review Finding 1.
 
 ### `appserver-deploy-role` (infra changes)
 - **Used for:** `deploy`, `destroy`, `start`, `stop`, `ssh`

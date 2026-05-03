@@ -2663,18 +2663,23 @@ cmd_auth_status() {
 # `auth` subcommand IS the auth call; `init`, `setup local`, `setup lock`,
 # and `config check-ips` don't touch AWS so are deliberately excluded.
 declare -A SUBCOMMAND_ROLE=(
-  [status]=readonly
-  [health]=readonly
-  [users]=readonly
-  [logs]=readonly
+  # Pure AWS reads (no SSM SendCommand) — readonly role.
   [spend]=readonly
-  [app_list]=readonly
   [threats_default]=readonly
   [threats_blocked]=readonly
   [threats_allowed]=readonly
   [threats_list]=readonly
   [threats_report]=readonly
   [setup_unlock]=readonly
+  # Run shell on the instance via SSM SendCommand (status/health/users/logs/
+  # app_list all use ssm_run). SendCommand is effectively a write API even
+  # for "read-only" commands like docker ps, so these escalate to cookie-ops.
+  # See specs/003-iam-mfa-scoping/spec.md security review Finding 1.
+  [status]=cookie-ops
+  [health]=cookie-ops
+  [users]=cookie-ops
+  [logs]=cookie-ops
+  [app_list]=cookie-ops
   [app_deploy]=cookie-ops
   [app_init]=cookie-ops
   [app_remove]=cookie-ops

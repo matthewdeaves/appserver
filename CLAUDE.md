@@ -80,8 +80,8 @@ Run `setup local` (interactive) to write `terraform/.env` + `terraform/terraform
 
 Routine CLI commands run via three MFA-gated IAM roles assumed from the deployer user:
 
-- `appserver-readonly-role` — diagnostic/triage (`status`, `health`, `logs`, `spend`, `app list`, `threats analyze`)
-- `appserver-cookie-ops-role` — cookie app management (`app deploy/init/remove/restart/env`, `config push`, `threats block/unblock/allow/unallow`)
+- `appserver-readonly-role` — pure AWS reads only (`spend`, `threats analyze/list/report/blocked/allowed`, `setup unlock`). No `ssm:SendCommand`.
+- `appserver-cookie-ops-role` — anything that runs shell on the instance via SSM, plus app management (`status`, `health`, `users`, `logs`, `app list/deploy/init/remove/restart/env`, `config push`, `threats block/unblock/allow/unallow`)
 - `appserver-deploy-role` — full infra changes (`deploy`, `destroy`, `start`, `stop`, `ssh`)
 
 Sessions are 1 hour; the CLI auto-assumes the right role per subcommand. One-time setup per machine:
