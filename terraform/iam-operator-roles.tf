@@ -177,17 +177,9 @@ resource "aws_iam_role_policy_attachment" "deploy_attach_monitoring_storage" {
   policy_arn = "${local.deployer_account_policy_prefix}/AppserverDeployerMonitoringStorage"
 }
 
-# ---------------------------------------------------------------------------
-# AppserverDeployerAssumeRoles — the policy attached to the deployer USER
-# (not to a role). Created here so terraform owns the policy resource;
-# attached to the deployer user by `appserver.sh init` in phase 2 (init
-# manages the deployer user's attachments — see scripts/appserver.sh
-# ensure_deployer_access).
-# ---------------------------------------------------------------------------
-
-resource "aws_iam_policy" "deployer_assume_roles" {
-  name        = "AppserverDeployerAssumeRoles"
-  description = "Allow appserver-deployer to assume the three MFA-gated operator roles"
-  policy      = file("${path.module}/deployer-policies/assume-roles.json")
-  tags        = local.common_tags
-}
+# Note: AppserverDeployerAssumeRoles is NOT managed by terraform. It is
+# created and attached to the appserver-deployer user by
+# `scripts/appserver.sh init` (alongside the three existing deployer
+# policies) — see ensure_deployer_access. The operator-role trust
+# policies above grant the MFA condition; the deployer-user policy
+# (managed in init) grants sts:AssumeRole permission to call them.

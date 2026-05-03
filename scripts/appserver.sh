@@ -269,8 +269,23 @@ ensure_deployer_access() {
   attach_iam_policy "$caller_user" "AppserverAdmin" "$account_id"
 
   # --- Deployer policies ---
-  local policy_names=("AppserverDeployerCompute" "AppserverDeployerIamSsm" "AppserverDeployerMonitoringStorage")
-  local policy_files=("$policy_dir/compute.json" "$policy_dir/iam-ssm.json" "$policy_dir/monitoring-storage.json")
+  # AppserverDeployerAssumeRoles grants sts:AssumeRole on the three MFA-gated
+  # operator roles (readonly / cookie-ops / deploy) defined in terraform.
+  # Once phase 5 of the IAM scoping rollout completes, this will be the only
+  # policy attached to the deployer user — the other three are kept here for
+  # backwards compatibility through phases 1-4.
+  local policy_names=(
+    "AppserverDeployerCompute"
+    "AppserverDeployerIamSsm"
+    "AppserverDeployerMonitoringStorage"
+    "AppserverDeployerAssumeRoles"
+  )
+  local policy_files=(
+    "$policy_dir/compute.json"
+    "$policy_dir/iam-ssm.json"
+    "$policy_dir/monitoring-storage.json"
+    "$policy_dir/assume-roles.json"
+  )
 
   for i in "${!policy_names[@]}"; do
     upsert_iam_policy "${policy_names[$i]}" "${policy_files[$i]}" "$account_id"
@@ -285,11 +300,18 @@ ensure_deployer_access() {
     echo "  IAM user ............. created ($deployer_user)"
   fi
 
-  # Attach deployer policies to both the deployer user and the calling user
-  for user in "$deployer_user" "$caller_user"; do
-    for i in "${!policy_names[@]}"; do
-      attach_iam_policy "$user" "${policy_names[$i]}" "$account_id"
-    done
+  # Attach deployer policies. Caller user (admin) gets the legacy three only —
+  # they don't need AssumeRoles since they already have AppserverAdmin.
+  local legacy_policy_names=(
+    "AppserverDeployerCompute"
+    "AppserverDeployerIamSsm"
+    "AppserverDeployerMonitoringStorage"
+  )
+  for name in "${policy_names[@]}"; do
+    attach_iam_policy "$deployer_user" "$name" "$account_id"
+  done
+  for name in "${legacy_policy_names[@]}"; do
+    attach_iam_policy "$caller_user" "$name" "$account_id"
   done
 
   local existing_keys
@@ -672,7 +694,20 @@ cmd_destroy() {
   local bucket="appserver-tfstate-${account_id}-${region}"
 
   local deployer_user="appserver-deployer"
-  local deployer_policies=("AppserverDeployerCompute" "AppserverDeployerIamSsm" "AppserverDeployerMonitoringStorage")
+  # Includes AppserverDeployerAssumeRoles (added in the IAM scoping rollout)
+  # so cleanup-bootstrap fully removes deployer-tier policies.
+  local deployer_policies=(
+    "AppserverDeployerCompute"
+    "AppserverDeployerIamSsm"
+    "AppserverDeployerMonitoringStorage"
+    "AppserverDeployerAssumeRoles"
+  )
+  # Subset attached to the calling user (admin); AssumeRoles is deployer-only.
+  local caller_deployer_policies=(
+    "AppserverDeployerCompute"
+    "AppserverDeployerIamSsm"
+    "AppserverDeployerMonitoringStorage"
+  )
 
   # Detach policies from deployer user and delete access keys
   if aws iam get-user --user-name "$deployer_user" &>/dev/null; then
@@ -743,10 +778,15 @@ cmd_destroy() {
     echo "  State bucket ......... already gone ($bucket)"
   fi
 
-  # Detach deployer policies from calling user and delete them
+  # Detach legacy deployer policies from the calling user (AssumeRoles was
+  # never attached to the caller, so it's not in this loop), then delete all
+  # deployer policies.
+  for name in "${caller_deployer_policies[@]}"; do
+    aws iam detach-user-policy --user-name "$caller_user" \
+      --policy-arn "arn:aws:iam::${account_id}:policy/${name}" 2>/dev/null || true
+  done
   for name in "${deployer_policies[@]}"; do
     local arn="arn:aws:iam::${account_id}:policy/${name}"
-    aws iam detach-user-policy --user-name "$caller_user" --policy-arn "$arn" 2>/dev/null || true
     delete_all_policy_versions "$arn" 2>/dev/null || true
     if aws iam delete-policy --policy-arn "$arn" 2>/dev/null; then
       echo "  IAM policy ........... deleted ($name)"
