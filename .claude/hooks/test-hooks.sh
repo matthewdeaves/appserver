@@ -234,6 +234,14 @@ assert_allow "$HOOK" "appserver threats block" "$(bash_payload './scripts/appser
 assert_allow "$HOOK" "appserver threats allow" "$(bash_payload './scripts/appserver.sh threats allow')"
 assert_allow "$HOOK" "appserver setup unlock" "$(bash_payload './scripts/appserver.sh setup unlock')"
 assert_allow "$HOOK" "appserver setup lock" "$(bash_payload './scripts/appserver.sh setup lock')"
+# auth subcommand (added in 003-iam-mfa-scoping). The CLI calls
+# sts:AssumeRole with MFA — the operator runs this from their shell;
+# it must not be blocked by the destructive-bash hook.
+assert_allow "$HOOK" "appserver auth"               "$(bash_payload './scripts/appserver.sh auth')"
+assert_allow "$HOOK" "appserver auth status"        "$(bash_payload './scripts/appserver.sh auth status')"
+assert_allow "$HOOK" "appserver auth --role readonly"   "$(bash_payload './scripts/appserver.sh auth --role readonly')"
+assert_allow "$HOOK" "appserver auth --role cookie-ops" "$(bash_payload './scripts/appserver.sh auth --role cookie-ops')"
+assert_allow "$HOOK" "appserver auth --role deploy"     "$(bash_payload './scripts/appserver.sh auth --role deploy')"
 # Pentest workflows.
 assert_allow "$HOOK" "pentest run cookie" "$(bash_payload './pentest/pentest.sh run cookie')"
 assert_allow "$HOOK" "pentest run-all"    "$(bash_payload './pentest/pentest.sh run-all')"

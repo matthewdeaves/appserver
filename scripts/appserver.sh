@@ -2,7 +2,7 @@
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 TERRAFORM_DIR="$(cd "$SCRIPT_DIR/../terraform" && pwd)" || { echo "ERROR: terraform/ directory not found" >&2; exit 1; }
 CONFIG_DIR="$(cd "$SCRIPT_DIR/../config" && pwd)" || { echo "ERROR: config/ directory not found" >&2; exit 1; }
 ENV_FILE="$TERRAFORM_DIR/.env"
@@ -188,6 +188,138 @@ cf_api() {
   local response
   response=$(curl "${args[@]}") || die "Cloudflare API request failed"
   echo "$response"
+}
+
+# --- Operator-role auth (MFA + sts:AssumeRole) ---
+#
+# The CLI assumes one of three IAM roles per subcommand
+# (readonly / cookie-ops / deploy), each gated by MFA + a 1-hour STS
+# session. See specs/003-iam-mfa-scoping/spec.md.
+#
+# Backwards-compat: if MFA_SERIAL_NUMBER is unset and the legacy
+# `appserver` profile exists, the CLI falls back to it (long-lived
+# deployer key) with a one-time per-shell warning. This fallback
+# is removed in phase 5.
+
+APPSERVER_LEGACY_FALLBACK_WARNED=""
+APPSERVER_AUTH_DISABLED="${APPSERVER_AUTH_DISABLED:-}"  # tests can set =1 to bypass
+
+get_mfa_serial() {
+  if [[ -n "${MFA_SERIAL_NUMBER:-}" ]]; then
+    echo "$MFA_SERIAL_NUMBER"
+    return 0
+  fi
+  return 1
+}
+
+# Construct the operator role ARN for a short role name. Pulls account ID
+# from sts:GetCallerIdentity (whatever profile is currently active).
+get_role_arn() {
+  local role="$1"
+  local account_id
+  account_id=$(aws sts get-caller-identity --query Account --output text 2>/dev/null) \
+    || return 1
+  case "$role" in
+    readonly)   echo "arn:aws:iam::${account_id}:role/appserver-readonly-role" ;;
+    cookie-ops) echo "arn:aws:iam::${account_id}:role/appserver-cookie-ops-role" ;;
+    deploy)     echo "arn:aws:iam::${account_id}:role/appserver-deploy-role" ;;
+    *)          return 1 ;;
+  esac
+}
+
+# Check whether the named profile has a non-expired STS session
+# (more than 5 minutes remaining on aws_session_expiration).
+session_valid() {
+  local profile="$1"
+  local expires_at
+  expires_at=$(aws configure get aws_session_expiration --profile "$profile" 2>/dev/null) || return 1
+  [[ -n "$expires_at" ]] || return 1
+
+  local now expiry_epoch
+  now=$(date -u +%s)
+  expiry_epoch=$(date -d "$expires_at" +%s 2>/dev/null) || return 1
+  local remaining=$((expiry_epoch - now))
+  [[ $remaining -gt 300 ]]
+}
+
+# Prompt for a TOTP code, call sts:AssumeRole, write the resulting
+# session to ~/.aws/credentials under profile appserver-<role>, and
+# export AWS_PROFILE.
+assume_role() {
+  local role="$1"
+  local role_arn mfa_serial
+  role_arn=$(get_role_arn "$role") \
+    || die "Could not derive role ARN for '$role'. Check AWS credentials work first."
+  mfa_serial=$(get_mfa_serial) \
+    || die "MFA_SERIAL_NUMBER not set. Add it to terraform local-env file (see HANDOFF.md phase 2)."
+
+  local session_name
+  session_name="${role//-/_}-$(date +%s)"
+  local code
+  echo "Enter MFA code for '$role' role:" >&2
+  read -rsp "  " code
+  echo >&2
+  [[ "$code" =~ ^[0-9]{6}$ ]] || die "Invalid MFA code (expected 6 digits)"
+
+  local creds
+  # Use the default credential chain (long-lived deployer key) to call
+  # sts:AssumeRole; do NOT chain off an already-assumed session.
+  creds=$(AWS_PROFILE=appserver aws sts assume-role \
+    --role-arn "$role_arn" \
+    --role-session-name "$session_name" \
+    --serial-number "$mfa_serial" \
+    --token-code "$code" \
+    --duration-seconds 3600 \
+    --output json 2>&1) || die "sts:AssumeRole failed: $creds"
+
+  local profile="appserver-$role"
+  local region key secret token expiry
+  region="$(get_region)"
+  key=$(echo "$creds"   | jq -r '.Credentials.AccessKeyId')
+  secret=$(echo "$creds" | jq -r '.Credentials.SecretAccessKey')
+  token=$(echo "$creds"  | jq -r '.Credentials.SessionToken')
+  expiry=$(echo "$creds" | jq -r '.Credentials.Expiration')
+  [[ -n "$key" && -n "$secret" && -n "$token" && -n "$expiry" ]] \
+    || die "Failed to parse sts:AssumeRole response"
+
+  aws configure set aws_access_key_id      "$key"    --profile "$profile"
+  aws configure set aws_secret_access_key  "$secret" --profile "$profile"
+  aws configure set aws_session_token      "$token"  --profile "$profile"
+  aws configure set aws_session_expiration "$expiry" --profile "$profile"
+  aws configure set region                 "$region" --profile "$profile"
+  aws configure set output                 json      --profile "$profile"
+
+  export AWS_PROFILE="$profile"
+  echo "Assumed $role role (expires $expiry)" >&2
+}
+
+# Ensure a valid session exists for the requested role, assuming if not.
+# If MFA isn't configured yet AND a legacy `appserver` profile exists,
+# fall back to it with a one-time warning (phases 1-4).
+ensure_session_valid_for_role() {
+  local role="$1"
+  [[ -n "$APPSERVER_AUTH_DISABLED" ]] && return 0  # tests / explicit opt-out
+
+  if ! get_mfa_serial >/dev/null 2>&1; then
+    if aws configure list-profiles 2>/dev/null | grep -q '^appserver$'; then
+      if [[ -z "$APPSERVER_LEGACY_FALLBACK_WARNED" ]]; then
+        echo "WARNING: Using legacy 'appserver' profile (long-lived deployer key)." >&2
+        echo "  Configure MFA_SERIAL_NUMBER in the terraform local-env file" >&2
+        echo "  to switch to the per-skill MFA flow. See HANDOFF.md." >&2
+        APPSERVER_LEGACY_FALLBACK_WARNED=1
+      fi
+      export AWS_PROFILE=appserver
+      return 0
+    fi
+    die "No AWS credentials configured. Run './scripts/appserver.sh auth' or 'aws configure --profile appserver'."
+  fi
+
+  local profile="appserver-$role"
+  if session_valid "$profile"; then
+    export AWS_PROFILE="$profile"
+    return 0
+  fi
+  assume_role "$role"
 }
 
 # --- IAM helpers ---
@@ -2435,40 +2567,190 @@ cmd_health() {
   fi
 }
 
+# --- Auth subcommand (user-facing) ---
+
+cmd_auth() {
+  local role=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --role)
+        role="${2:-}"; shift 2 || die "Missing role after --role"
+        ;;
+      status)
+        cmd_auth_status
+        return $?
+        ;;
+      --help|-h)
+        echo "Usage: appserver auth [--role <readonly|cookie-ops|deploy>]"
+        echo "       appserver auth status"
+        echo
+        echo "Authenticate via MFA + sts:AssumeRole and write a 1-hour STS"
+        echo "session to a local AWS profile. Subsequent CLI subcommands"
+        echo "automatically pick the right role per their scope."
+        return 0
+        ;;
+      *)
+        die "Unknown argument: $1 (try 'appserver auth --help')"
+        ;;
+    esac
+  done
+
+  if [[ -z "$role" ]]; then
+    echo "Which role do you want to assume?"
+    echo "  1) readonly   — diagnostic / triage (default)"
+    echo "  2) cookie-ops — cookie app management"
+    echo "  3) deploy     — full infrastructure changes"
+    read -rp "Role [1]: " choice
+    # shellcheck disable=SC2209  # role names — not the `readonly` builtin
+    case "${choice:-1}" in
+      1|readonly)   role=readonly ;;
+      2|cookie-ops) role=cookie-ops ;;
+      3|deploy)     role=deploy ;;
+      *)            die "Unknown role choice: $choice" ;;
+    esac
+  fi
+
+  case "$role" in
+    readonly|cookie-ops|deploy) ;;
+    *) die "Invalid role: $role (expected: readonly, cookie-ops, deploy)" ;;
+  esac
+
+  assume_role "$role"
+}
+
+cmd_auth_status() {
+  echo "Operator role sessions:"
+  for role in readonly cookie-ops deploy; do
+    local profile="appserver-$role"
+    if aws configure list-profiles 2>/dev/null | grep -q "^${profile}\$"; then
+      local expires_at
+      expires_at=$(aws configure get aws_session_expiration --profile "$profile" 2>/dev/null) || expires_at=""
+      if [[ -n "$expires_at" ]]; then
+        local now expiry_epoch remaining_s
+        now=$(date -u +%s)
+        expiry_epoch=$(date -d "$expires_at" +%s 2>/dev/null) || expiry_epoch=$now
+        remaining_s=$((expiry_epoch - now))
+        if [[ $remaining_s -gt 0 ]]; then
+          local remaining_m=$((remaining_s / 60))
+          echo "  $role:  active (${remaining_m}m remaining, expires $expires_at)"
+        else
+          echo "  $role:  expired ($expires_at)"
+        fi
+      else
+        echo "  $role:  configured but no STS expiry recorded"
+      fi
+    else
+      echo "  $role:  not authenticated"
+    fi
+  done
+  if [[ -n "${AWS_PROFILE:-}" ]]; then
+    echo
+    echo "Active profile: $AWS_PROFILE"
+  fi
+}
+
 # --- Main ---
+
+# Map each subcommand identifier to the operator role required to run it.
+# `auth` subcommand IS the auth call; `init`, `setup local`, `setup lock`,
+# and `config check-ips` don't touch AWS so are deliberately excluded.
+declare -A SUBCOMMAND_ROLE=(
+  [status]=readonly
+  [health]=readonly
+  [users]=readonly
+  [logs]=readonly
+  [spend]=readonly
+  [app_list]=readonly
+  [threats_default]=readonly
+  [threats_blocked]=readonly
+  [threats_allowed]=readonly
+  [threats_list]=readonly
+  [threats_report]=readonly
+  [setup_unlock]=readonly
+  [app_deploy]=cookie-ops
+  [app_init]=cookie-ops
+  [app_remove]=cookie-ops
+  [app_restart]=cookie-ops
+  [app_env]=cookie-ops
+  [config_push]=cookie-ops
+  [threats_block]=cookie-ops
+  [threats_unblock]=cookie-ops
+  [threats_allow]=cookie-ops
+  [threats_unallow]=cookie-ops
+  [deploy]=deploy
+  [destroy]=deploy
+  [start]=deploy
+  [stop]=deploy
+  [ssh]=deploy
+)
+
+# Wrapper to ensure the right role's session is active before the
+# subcommand runs. Use as: with_role <key> <cmd_function> [args...].
+with_role() {
+  local key="$1"; shift
+  local role="${SUBCOMMAND_ROLE[$key]:-}"
+  [[ -n "$role" ]] && ensure_session_valid_for_role "$role"
+  "$@"
+}
+
+# When this script is sourced (e.g. by tests/auth-flow-test.sh) all
+# function definitions and the SUBCOMMAND_ROLE map are exposed but the
+# dispatcher below is skipped — sourcing should not run any subcommand.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  # shellcheck disable=SC2317  # `|| true` is reached if `return` errors when not sourced
+  return 0 2>/dev/null || true
+fi
 
 check_dependencies
 load_env
 
 case "${1:-}" in
+  auth)     shift; cmd_auth "$@" ;;
   init)     cmd_init ;;
-  deploy)   cmd_deploy ;;
-  destroy)  cmd_destroy ;;
-  status)   cmd_status ;;
-  health)   cmd_health ;;
-  users)    cmd_users ;;
-  start)    cmd_start ;;
-  stop)     cmd_stop ;;
-  ssh)      cmd_ssh ;;
-  logs)     cmd_logs "${2:-}" ;;
-  spend)    cmd_spend ;;
-  threats)  shift; cmd_threats "$@" ;;
-  setup)    shift; cmd_setup "$@" ;;
+  deploy)   with_role deploy   cmd_deploy ;;
+  destroy)  with_role destroy  cmd_destroy ;;
+  status)   with_role status   cmd_status ;;
+  health)   with_role health   cmd_health ;;
+  users)    with_role users    cmd_users ;;
+  start)    with_role start    cmd_start ;;
+  stop)     with_role stop     cmd_stop ;;
+  ssh)      with_role ssh      cmd_ssh ;;
+  logs)     with_role logs     cmd_logs "${2:-}" ;;
+  spend)    with_role spend    cmd_spend ;;
+  threats)
+    case "${2:-}" in
+      block)    shift 2; with_role threats_block    cmd_threats_block "$@" ;;
+      unblock)  shift 2; with_role threats_unblock  cmd_threats_unblock "$@" ;;
+      blocked)  shift 2; with_role threats_blocked  cmd_threats_blocked "$@" ;;
+      allow)    shift 2; with_role threats_allow    cmd_threats_allow "$@" ;;
+      unallow)  shift 2; with_role threats_unallow  cmd_threats_unallow "$@" ;;
+      allowed)  shift 2; with_role threats_allowed  cmd_threats_allowed "$@" ;;
+      list)     shift 2; with_role threats_list     cmd_threats_list "$@" ;;
+      report)   shift 2; with_role threats_report   cmd_threats_report "$@" ;;
+      *)        shift;   with_role threats_default  cmd_threats "$@" ;;
+    esac
+    ;;
+  setup)
+    case "${2:-}" in
+      unlock)   shift 2; with_role setup_unlock cmd_setup_unlock "$@" ;;
+      *)        shift;   cmd_setup "$@" ;;
+    esac
+    ;;
   config)
     case "${2:-}" in
-      push) cmd_config_push ;;
+      push)      with_role config_push cmd_config_push ;;
       check-ips) cmd_config_check_ips "${3:-}" ;;
-      *)    echo "Usage: appserver config {push|check-ips [--fix]}" ;;
+      *)         echo "Usage: appserver config {push|check-ips [--fix]}" ;;
     esac
     ;;
   app)
     case "${2:-}" in
-      init)    cmd_app_init "${3:-}" ;;
-      deploy)  cmd_app_deploy "${3:-}" ;;
-      restart) cmd_app_restart "${3:-}" ;;
-      list)    cmd_app_list ;;
-      remove)  cmd_app_remove "${3:-}" ;;
-      env)     shift 2; cmd_app_env "$@" ;;
+      init)    with_role app_init    cmd_app_init "${3:-}" ;;
+      deploy)  with_role app_deploy  cmd_app_deploy "${3:-}" ;;
+      restart) with_role app_restart cmd_app_restart "${3:-}" ;;
+      list)    with_role app_list    cmd_app_list ;;
+      remove)  with_role app_remove  cmd_app_remove "${3:-}" ;;
+      env)     shift 2; with_role app_env cmd_app_env "$@" ;;
       *)       echo "Usage: appserver app {init|deploy|restart|list|remove|env} [name] [args...]" ;;
     esac
     ;;
@@ -2476,6 +2758,11 @@ case "${1:-}" in
     echo "Appserver — Docker app hosting on EC2 behind Cloudflare"
     echo
     echo "Usage: $(basename "$0") <command>"
+    echo
+    echo "Auth:"
+    echo "  auth [--role <r>]   Assume an IAM role via MFA (1-hour STS session)"
+    echo "                      Roles: readonly, cookie-ops, deploy"
+    echo "  auth status         Show active role sessions and time remaining"
     echo
     echo "Infrastructure:"
     echo "  init          Interactive setup (IAM, state bucket, config)"

@@ -68,6 +68,13 @@ jobs:
           shellcheck .claude/hooks/*.sh
           bash .claude/hooks/test-hooks.sh
 
+      - name: Auth-flow tests
+        run: |
+          set -euo pipefail
+          bash -n tests/auth-flow-test.sh
+          shellcheck tests/auth-flow-test.sh
+          bash tests/auth-flow-test.sh
+
       - name: ShellCheck pentest
         uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # v2.0.0
         env:
