@@ -59,7 +59,7 @@ Use [diagnostics.md](references/diagnostics.md) for exact commands. Work top-dow
 6. Resource pressure (memory, disk — t4g.small has 2GB)
 7. Security posture (SG rules, CloudWatch alarms, DLM snapshots)
 
-**AWS profile:** Use `AWS_PROFILE=appserver` (deployer) for all commands. See [aws-access.md](references/aws-access.md) for escalation.
+**AWS auth:** Run `./scripts/appserver.sh auth` once at the start of a session — the CLI handles per-subcommand role assumption automatically. Phase 1 (Triage) calls map to the readonly role; mutations escalate to cookie-ops or deploy-role and prompt for MFA on first use of each. See [aws-access.md](references/aws-access.md) for the role map and recovery options.
 
 ### Phase 2: Diagnosis
 

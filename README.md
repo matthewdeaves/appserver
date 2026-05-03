@@ -16,7 +16,7 @@ Client → Cloudflare → Tunnel → Traefik (:80) → App container
 
 - **Compute**: EC2 t4g.small (ARM/Graviton), Amazon Linux 2023
 - **Ingress**: Cloudflare Tunnel — zero inbound security group rules
-- **Auth**: Cloudflare Access — email OTP for browsers, service token for CLI
+- **Auth**: Cloudflare Access — email OTP for browsers, service token for CLI. AWS-side: per-skill IAM roles assumed via TOTP MFA, 1-hour STS sessions (see "Operator IAM" below).
 - **Routing**: Traefik reverse proxy — routes `<app>.matthewdeaves.com` subdomains via Docker labels
 - **IaC**: Terraform manages EC2, IAM, Cloudflare Tunnel/DNS/Access, monitoring, and snapshots
 - **Monitoring**: $10/month budget alarm, EC2 auto-recovery, daily EBS snapshots (7-day retention)
@@ -88,6 +88,33 @@ The CLI auto-detects the `appserver` AWS profile if configured. The deployer use
 
 **When to run `init`:** only for scenario A, or if a previous `destroy` was run with the "also remove bootstrap" option (which deletes the deployer IAM user + state bucket). `init` is idempotent but requires admin credentials, so it can't run from the `appserver` profile.
 
+### Operator IAM (MFA + per-skill roles)
+
+Day-to-day CLI commands authenticate via three MFA-gated IAM roles, not the long-lived deployer access key:
+
+```bash
+./scripts/appserver.sh auth                    # interactive role pick (default: readonly)
+./scripts/appserver.sh auth --role deploy      # explicit deploy-role for a terraform apply session
+./scripts/appserver.sh auth status             # show active session expiries
+```
+
+The CLI maps each subcommand to one of:
+
+- `appserver-readonly-role` — diagnostic only (`status`, `logs`, `spend`, `health`, `app list`, etc.)
+- `appserver-cookie-ops-role` — cookie app management (`app deploy/init/remove/restart/env`, `config push`, `threats block/...`)
+- `appserver-deploy-role` — full infra changes (`deploy`, `destroy`, `start`, `stop`, `ssh`)
+
+One-time MFA setup per machine:
+
+1. AWS console → IAM → Users → `appserver-deployer` → Security credentials → Assign MFA device (TOTP, e.g. 1Password / Authy)
+2. Copy the device ARN into `terraform/.env`:
+   ```
+   export MFA_SERIAL_NUMBER="arn:aws:iam::<account-id>:mfa/appserver-deployer"
+   ```
+3. Run `appserver.sh auth` — it'll prompt for the 6-digit code and write a 1-hour session to `~/.aws/credentials`
+
+The legacy long-lived `appserver` profile remains available as a fallback through the rollout window (with a one-time per-shell deprecation warning); it's removed in phase 5. See `specs/003-iam-mfa-scoping/` for the design.
+
 **Things to know about running from multiple machines:**
 
 - **Terraform state locking is not set up.** The S3 backend has no DynamoDB lock table, so two machines running `deploy` simultaneously can corrupt state. Coordinate manually, or add a lock table if this becomes a problem.
@@ -105,6 +132,9 @@ Pentest target YAMLs (`pentest/targets/*.yaml`) are encrypted via git-crypt. The
 ## CLI Reference
 
 ```
+appserver.sh auth [--role <r>]     Assume an IAM role via MFA (1-hour STS session)
+appserver.sh auth status           Show active role sessions
+
 appserver.sh init                  Bootstrap AWS infra (IAM + state bucket, admin creds)
 appserver.sh deploy                Terraform apply + upload config to S3
 appserver.sh destroy               Terraform destroy + optional cleanup

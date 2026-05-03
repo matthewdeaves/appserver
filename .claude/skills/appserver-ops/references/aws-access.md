@@ -1,49 +1,49 @@
 # AWS Access and IAM
 
-How appserver's two-tier IAM model works and which profile to use for what.
+How appserver's IAM model works and which role to use for what.
 
-## Profiles
+## Auth flow
 
-### Deployer Profile (`AWS_PROFILE=appserver`)
-- **Used for:** All routine operations (diagnostics, deploy, app management, config push, spend)
-- **User:** `appserver-deployer` IAM user
-- **Created by:** `appserver.sh init` (new AWS account) — on a fresh dev machine with existing infra, run `appserver.sh setup local` instead (writes local config only, no IAM changes)
-- **Policies:** 3 deployer policies (compute, iam-ssm, monitoring-storage)
+Run once per shell session:
 
-### Admin Profile (default / no AWS_PROFILE)
-- **Used for:** Infrastructure bootstrap only (`appserver.sh init`) — creates IAM policies, deployer user, and state bucket
+```bash
+./scripts/appserver.sh auth
+```
+
+The CLI prompts for a TOTP code, calls `sts:AssumeRole` against the
+right operator role for the work, and writes a 1-hour STS session to a
+profile in `~/.aws/credentials`. Subsequent CLI subcommands automatically
+re-use cached sessions and prompt for re-auth on expiry.
+
+## Roles
+
+The CLI maps each subcommand to one of three operator roles:
+
+### `appserver-readonly-role` (diagnostic, default)
+- **Used for:** `status`, `health`, `users`, `logs`, `spend`, `app list`, `threats analyze` / `report` / `list` / `blocked` / `allowed`, `setup unlock`
+- **Permissions:** read-only AWS surface (Describe*, Get*, ListBucket on artifacts/state, no SendCommand, no IAM mutation)
+- **MaxSessionDuration:** 1 hour
+
+### `appserver-cookie-ops-role` (app-layer mutations)
+- **Used for:** `app deploy`, `app init`, `app remove`, `app restart`, `app env`, `config push`, `threats block` / `unblock` / `allow` / `unallow`
+- **Permissions:** readonly + `ssm:SendCommand` and `ssm:StartSession` on the `Project=appserver`-tagged instance, parameter RW under `/appserver/*`
+- **MaxSessionDuration:** 1 hour
+
+### `appserver-deploy-role` (infra changes)
+- **Used for:** `deploy`, `destroy`, `start`, `stop`, `ssh`
+- **Permissions:** equivalent to the legacy deployer (full compute + iam-ssm + monitoring-storage)
+- **MaxSessionDuration:** 1 hour
+
+### Admin (escalation only)
+- **Used for:** `appserver.sh init` (creates IAM policies, deployer user, state bucket), MFA recovery
 - **User:** `rockport-admin` (shared admin user across projects)
 - **Policy:** `AppserverAdmin` (auto-created by init)
 
-## When to Use Each
+`init` and `destroy --cleanup-bootstrap` explicitly `unset AWS_PROFILE` to drop to the admin credential chain. Everything else goes through the role flow.
 
-### Use Deployer (default for appserver-ops)
+## Recovery
 
-Almost everything:
-- `aws ec2 describe-instances` (instance status)
-- `aws ssm send-command` / `describe-instance-information` (remote commands)
-- `aws ssm get-parameter` (read secrets like tunnel token)
-- `aws s3 cp` (upload/download artifacts)
-- `aws cloudwatch describe-alarms` (alarm status)
-- `aws ce get-cost-and-usage` (spend data)
-- `terraform plan` / `terraform apply` / `terraform destroy`
-- All `appserver.sh` commands except `init`
-
-### Use Admin (escalation only)
-
-Only when the issue involves:
-- Creating or modifying IAM policies
-- Creating or modifying IAM users
-- Managing the state bucket
-- First-time infrastructure bootstrap (`appserver.sh init`) — creates deployer user, policies, state bucket
-
-**To escalate:** Unset the deployer profile:
-```bash
-unset AWS_PROFILE
-# Now commands use the default credential chain (rockport-admin)
-```
-
-**Appserver-ops should almost never need admin.** If a fix requires IAM policy changes, those changes should go through terraform (which runs as the deployer), not manual IAM API calls.
+If MFA is lost, re-enrol via the AWS console using `rockport-admin` (the IAM admin retains the `AppserverAdmin` managed policy throughout). See `HANDOFF.md` for the recovery walkthrough.
 
 ## Deployer Capabilities Detail
 
@@ -119,9 +119,10 @@ The deployer profile can perform these security checks without escalation:
 | Cookie audit trail | SSM: `python manage.py cookie_admin audit --json` | No unexpected registrations |
 | Cost anomalies | `ce get-cost-and-usage` (us-east-1) | Within budget |
 
-**Cannot do with deployer (requires admin):**
+**Cannot do with deploy-role (requires admin):**
 - `iam:ListRolePolicies` / `iam:ListAttachedRolePolicies` on the instance role
 - Modifying IAM policies directly (changes go through terraform + `init`)
+- Creating or removing the deployer user, IAM policies, or state bucket
 
 ## Region
 

@@ -6,11 +6,13 @@ For Cookie-specific diagnostics (cookie_admin, cron jobs, cleanup commands), see
 
 ## Prerequisites
 
-All commands use the deployer AWS profile unless noted otherwise.
+Run `./scripts/appserver.sh auth` once per shell session — the CLI handles role assumption per-subcommand. For raw `aws ...` calls outside the CLI, the readonly profile covers all diagnostic commands below:
 
 ```bash
-export AWS_PROFILE=appserver
+export AWS_PROFILE=appserver-readonly
 ```
+
+Use `appserver-deploy` for terraform / start / stop / ssh, and `appserver-cookie-ops` for SSM SendCommand / StartSession.
 
 To get the instance ID and region:
 ```bash
@@ -229,7 +231,7 @@ Should show ENABLED. If ERROR or DISABLED, snapshots aren't happening.
 
 **Instance role audit (verify least-privilege) — requires admin profile:**
 ```bash
-# These commands require admin (unset AWS_PROFILE), deployer cannot list role policies
+# These commands require admin (unset AWS_PROFILE), no operator role can list role policies
 unset AWS_PROFILE
 aws iam list-role-policies --role-name appserver-instance-role --output json
 aws iam list-attached-role-policies --role-name appserver-instance-role --output json

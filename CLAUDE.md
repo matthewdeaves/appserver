@@ -76,6 +76,22 @@ Run `setup local` (interactive) to write `terraform/.env` + `terraform/terraform
 
 `init` is idempotent but requires admin AWS credentials (can't run as the deployer user). Use it only for scenario A, or if a prior `destroy --cleanup-bootstrap` wiped the IAM user + state bucket.
 
+### MFA-gated operator roles (003-iam-mfa-scoping)
+
+Routine CLI commands run via three MFA-gated IAM roles assumed from the deployer user:
+
+- `appserver-readonly-role` — diagnostic/triage (`status`, `health`, `logs`, `spend`, `app list`, `threats analyze`)
+- `appserver-cookie-ops-role` — cookie app management (`app deploy/init/remove/restart/env`, `config push`, `threats block/unblock/allow/unallow`)
+- `appserver-deploy-role` — full infra changes (`deploy`, `destroy`, `start`, `stop`, `ssh`)
+
+Sessions are 1 hour; the CLI auto-assumes the right role per subcommand. One-time setup per machine:
+
+1. Enrol a TOTP MFA device on `appserver-deployer` via the AWS console (manual operator step)
+2. Add `MFA_SERIAL_NUMBER=arn:aws:iam::<account-id>:mfa/appserver-deployer` to the local terraform env file
+3. Run `./scripts/appserver.sh auth` to assume a role; subsequent CLI calls reuse cached sessions
+
+Until phase 5 of the rollout completes, the CLI also accepts the legacy long-lived `appserver` profile as a fallback (with a one-time per-shell deprecation warning). See `specs/003-iam-mfa-scoping/HANDOFF.md` for the full apply sequence.
+
 Optional: decrypt pentest target configs (requires SSM access + `git-crypt` installed locally):
 ```bash
 ./scripts/appserver.sh setup unlock            # Fetches key from SSM automatically
