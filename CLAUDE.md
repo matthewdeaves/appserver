@@ -90,7 +90,7 @@ Sessions are 1 hour; the CLI auto-assumes the right role per subcommand. One-tim
 2. Add `MFA_SERIAL_NUMBER=arn:aws:iam::<account-id>:mfa/appserver-deployer` to the local terraform env file
 3. Run `./scripts/appserver.sh auth` to assume a role; subsequent CLI calls reuse cached sessions
 
-Until phase 5 of the rollout completes, the CLI also accepts the legacy long-lived `appserver` profile as a fallback (with a one-time per-shell deprecation warning). See `specs/003-iam-mfa-scoping/HANDOFF.md` for the full apply sequence.
+After the phase-5 cutover, the deployer user only holds `AppserverDeployerAssumeRoles`; the access key on disk can only call MFA-gated `sts:AssumeRole` and is useless without the TOTP code. See `specs/003-iam-mfa-scoping/HANDOFF.md` for the apply sequence and recovery options.
 
 Optional: decrypt pentest target configs (requires SSM access + `git-crypt` installed locally):
 ```bash

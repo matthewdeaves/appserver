@@ -310,26 +310,24 @@ STUB_ACCOUNT_ID=111122223333 \
 assert_fail "assume_role: surfaces sts failure" $?
 
 # ============================================================================
-# ensure_session_valid_for_role — falls back to legacy `appserver` profile
-# when MFA_SERIAL_NUMBER is unset and the legacy profile exists.
+# ensure_session_valid_for_role — phase 5 cutover: legacy fallback REMOVED.
+# Without MFA_SERIAL_NUMBER, the helper must die regardless of whether a
+# legacy `appserver` profile is present in ~/.aws/credentials.
 # ============================================================================
-SB=$(mk_sandbox legacy-fallback)
+SB=$(mk_sandbox legacy-removed)
 make_stub_aws "$SB"
 make_stub_terraform "$SB"
 HOME="$SB/home" aws configure set aws_access_key_id LEGACY     --profile appserver
 HOME="$SB/home" aws configure set aws_secret_access_key SECRET  --profile appserver
 HOME="$SB/home" aws configure set region eu-west-2              --profile appserver
 
-out=$(STUB_LIST_PROFILES="appserver" \
+# Even with the legacy profile present, no MFA = die. (Phase 5: no fallback.)
+STUB_LIST_PROFILES="appserver" \
   run_in_sandbox "$SB" '
     unset MFA_SERIAL_NUMBER
-    ensure_session_valid_for_role readonly 2>&1
-    echo "AWS_PROFILE=$AWS_PROFILE"
-  ')
-echo "$out" | grep -q "AWS_PROFILE=appserver"
-assert_pass "ensure_session_valid_for_role: legacy fallback exports AWS_PROFILE=appserver" $?
-echo "$out" | grep -q "Using legacy 'appserver' profile"
-assert_pass "ensure_session_valid_for_role: legacy fallback prints warning" $?
+    ensure_session_valid_for_role readonly
+  ' >/dev/null 2>&1
+assert_fail "ensure_session_valid_for_role: no MFA dies even with legacy profile present" $?
 
 # Without MFA AND without legacy profile -> die.
 SB=$(mk_sandbox no-fallback)

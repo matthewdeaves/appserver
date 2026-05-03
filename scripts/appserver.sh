@@ -9,10 +9,11 @@ ENV_FILE="$TERRAFORM_DIR/.env"
 CACHED_REGION=""
 CACHED_INSTANCE_ID=""
 
-# Use the appserver AWS profile if it exists and no profile is already set
-if [[ -z "${AWS_PROFILE:-}" ]] && aws configure list-profiles 2>/dev/null | grep -q '^appserver$'; then
-  export AWS_PROFILE=appserver
-fi
+# Phase 5: no auto-export of the legacy `appserver` profile. AWS_PROFILE
+# is set per-subcommand by ensure_session_valid_for_role -> appserver-<role>.
+# Operators who still have a long-lived `appserver` profile in
+# ~/.aws/credentials can either rotate to the role flow (recommended) or
+# pass AWS_PROFILE=appserver explicitly when they need it.
 
 # --- Helper functions ---
 
@@ -196,12 +197,11 @@ cf_api() {
 # (readonly / cookie-ops / deploy), each gated by MFA + a 1-hour STS
 # session. See specs/003-iam-mfa-scoping/spec.md.
 #
-# Backwards-compat: if MFA_SERIAL_NUMBER is unset and the legacy
-# `appserver` profile exists, the CLI falls back to it (long-lived
-# deployer key) with a one-time per-shell warning. This fallback
-# is removed in phase 5.
+# Phase 5 cutover: long-lived `appserver` profile fallback removed.
+# All AWS-touching subcommands now require either an active operator-role
+# session (assume_role -> appserver-<role> profile) or an explicit
+# APPSERVER_AUTH_DISABLED=1 escape hatch (tests / local dev).
 
-APPSERVER_LEGACY_FALLBACK_WARNED=""
 APPSERVER_AUTH_DISABLED="${APPSERVER_AUTH_DISABLED:-}"  # tests can set =1 to bypass
 
 get_mfa_serial() {
@@ -294,24 +294,13 @@ assume_role() {
 }
 
 # Ensure a valid session exists for the requested role, assuming if not.
-# If MFA isn't configured yet AND a legacy `appserver` profile exists,
-# fall back to it with a one-time warning (phases 1-4).
+# Phase 5: legacy long-lived `appserver` profile fallback removed.
 ensure_session_valid_for_role() {
   local role="$1"
   [[ -n "$APPSERVER_AUTH_DISABLED" ]] && return 0  # tests / explicit opt-out
 
   if ! get_mfa_serial >/dev/null 2>&1; then
-    if aws configure list-profiles 2>/dev/null | grep -q '^appserver$'; then
-      if [[ -z "$APPSERVER_LEGACY_FALLBACK_WARNED" ]]; then
-        echo "WARNING: Using legacy 'appserver' profile (long-lived deployer key)." >&2
-        echo "  Configure MFA_SERIAL_NUMBER in the terraform local-env file" >&2
-        echo "  to switch to the per-skill MFA flow. See HANDOFF.md." >&2
-        APPSERVER_LEGACY_FALLBACK_WARNED=1
-      fi
-      export AWS_PROFILE=appserver
-      return 0
-    fi
-    die "No AWS credentials configured. Run './scripts/appserver.sh auth' or 'aws configure --profile appserver'."
+    die "MFA_SERIAL_NUMBER not set. Add it to the terraform local-env file and run './scripts/appserver.sh auth'."
   fi
 
   local profile="appserver-$role"
@@ -401,11 +390,12 @@ ensure_deployer_access() {
   attach_iam_policy "$caller_user" "AppserverAdmin" "$account_id"
 
   # --- Deployer policies ---
-  # AppserverDeployerAssumeRoles grants sts:AssumeRole on the three MFA-gated
-  # operator roles (readonly / cookie-ops / deploy) defined in terraform.
-  # Once phase 5 of the IAM scoping rollout completes, this will be the only
-  # policy attached to the deployer user — the other three are kept here for
-  # backwards compatibility through phases 1-4.
+  # Phase 5 cutover: the deployer USER now holds ONLY AppserverDeployerAssumeRoles.
+  # The three legacy policies (compute / iam-ssm / monitoring-storage) are
+  # still managed here so terraform-side resources (the deploy role) and the
+  # admin/caller user can attach them, but they no longer attach to the
+  # deployer user. A leaked access key is now reduced to MFA-gated
+  # sts:AssumeRole on the three operator roles — useless without MFA.
   local policy_names=(
     "AppserverDeployerCompute"
     "AppserverDeployerIamSsm"
@@ -432,16 +422,28 @@ ensure_deployer_access() {
     echo "  IAM user ............. created ($deployer_user)"
   fi
 
-  # Attach deployer policies. Caller user (admin) gets the legacy three only —
-  # they don't need AssumeRoles since they already have AppserverAdmin.
+  # Phase 5: the deployer USER attaches ONLY the AssumeRoles policy.
+  # Detach the legacy three from the user if a previous phase attached
+  # them (idempotent — phase 1-4 installs leave them in place; phase 5
+  # cleans them up on the next `init` run).
   local legacy_policy_names=(
     "AppserverDeployerCompute"
     "AppserverDeployerIamSsm"
     "AppserverDeployerMonitoringStorage"
   )
-  for name in "${policy_names[@]}"; do
-    attach_iam_policy "$deployer_user" "$name" "$account_id"
+  attach_iam_policy "$deployer_user" "AppserverDeployerAssumeRoles" "$account_id"
+  for name in "${legacy_policy_names[@]}"; do
+    if aws iam list-attached-user-policies --user-name "$deployer_user" \
+        --query "AttachedPolicies[?PolicyName=='$name']" --output text 2>/dev/null \
+        | grep -q "$name"; then
+      aws iam detach-user-policy --user-name "$deployer_user" \
+        --policy-arn "arn:aws:iam::${account_id}:policy/${name}" 2>/dev/null \
+        && echo "  Policy attachment .... detached ($name -> $deployer_user, phase-5 cutover)"
+    fi
   done
+
+  # The calling user (admin) still gets the three legacy policies attached
+  # for emergency direct-deployer access without going through MFA.
   for name in "${legacy_policy_names[@]}"; do
     attach_iam_policy "$caller_user" "$name" "$account_id"
   done

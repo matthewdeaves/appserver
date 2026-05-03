@@ -113,7 +113,16 @@ One-time MFA setup per machine:
    ```
 3. Run `appserver.sh auth` — it'll prompt for the 6-digit code and write a 1-hour session to `~/.aws/credentials`
 
-The legacy long-lived `appserver` profile remains available as a fallback through the rollout window (with a one-time per-shell deprecation warning); it's removed in phase 5. See `specs/003-iam-mfa-scoping/` for the design.
+After the phase-5 cutover the deployer user only holds `AppserverDeployerAssumeRoles` — the long-lived access key on disk can do nothing without an MFA prompt. See `specs/003-iam-mfa-scoping/` for the design.
+
+#### Migrating from the long-lived deployer key
+
+If you forked the repo before the rollout completed:
+
+1. Re-run `./scripts/appserver.sh init` (admin creds) — it'll detach the three legacy policies from the deployer user idempotently.
+2. Re-run `./scripts/appserver.sh deploy` to apply the phase-1 terraform additions (3 operator roles + boundaries + iam-ssm tightening).
+3. Enrol MFA on `appserver-deployer` (AWS console) and add `MFA_SERIAL_NUMBER=...` to `terraform/.env`.
+4. `./scripts/appserver.sh auth` to assume a role; the legacy `appserver` profile is no longer auto-used.
 
 **Things to know about running from multiple machines:**
 
