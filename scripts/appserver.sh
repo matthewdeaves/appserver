@@ -213,6 +213,14 @@ cmd_init() {
     unset AWS_PROFILE
   fi
 
+  # 004: every admin operation requires an MFA-derived session. The
+  # AppserverAdmin policy explicit-denies all actions outside a small
+  # safe-list (sts:GetSessionToken, MFA management, self-introspection)
+  # when aws:MultiFactorAuthPresent is false. admin_mfa_session() mints
+  # the session via sts:GetSessionToken and exports AWS_PROFILE.
+  load_env  # pick up APPSERVER_ADMIN_MFA_SERIAL from terraform local-env
+  admin_mfa_session
+
   echo "Appserver Setup"
   echo "==============="
   echo

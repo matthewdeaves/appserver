@@ -104,6 +104,65 @@ assume_role() {
   echo "Assumed $role role (expires $expiry)" >&2
 }
 
+# Mints a 1-hour MFA-derived STS session for the appserver-admin user (the
+# shared admin shared with Rockport, used by `appserver.sh init`). Reads
+# APPSERVER_ADMIN_MFA_SERIAL from the local-env file. Writes creds under the
+# appserver-admin-mfa profile and exports AWS_PROFILE. Skipped if
+# APPSERVER_AUTH_DISABLED=1 (true bootstrap on a fresh account where the
+# AppserverAdmin policy isn't deployed yet).
+#
+# Why: AppserverAdmin's DenyAllWithoutMFA statement (004) explicit-denies
+# every action outside a tiny safe-list when aws:MultiFactorAuthPresent is
+# false. A leaked admin access key is therefore useless without the second
+# factor.
+admin_mfa_session() {
+  [[ -n "$APPSERVER_AUTH_DISABLED" ]] && return 0
+
+  local profile="appserver-admin-mfa"
+
+  if [[ -z "${APPSERVER_ADMIN_MFA_SERIAL:-}" ]]; then
+    die "APPSERVER_ADMIN_MFA_SERIAL not set. Enrol MFA on the shared admin user (rockport-admin) and add the device ARN to the local-env file (see terraform/.env.example). Or set APPSERVER_AUTH_DISABLED=1 only when bootstrapping a fresh account where the AppserverAdmin policy isn't deployed yet."
+  fi
+
+  if session_valid "$profile"; then
+    export AWS_PROFILE="$profile"
+    return 0
+  fi
+
+  local code=""
+  while [[ ! "$code" =~ ^[0-9]{6}$ ]]; do
+    read -rsp "TOTP code for appserver-admin: " code
+    echo
+    [[ ! "$code" =~ ^[0-9]{6}$ ]] && echo "  (need a 6-digit code; try again)" >&2
+  done
+
+  local creds
+  creds=$(env -u AWS_PROFILE aws sts get-session-token \
+    --serial-number "$APPSERVER_ADMIN_MFA_SERIAL" \
+    --token-code "$code" \
+    --duration-seconds 3600 \
+    --output json) || die "sts:GetSessionToken failed for appserver-admin"
+
+  local key secret token expiry region
+  region="$(get_region)"
+  key=$(echo "$creds"   | jq -r '.Credentials.AccessKeyId')
+  secret=$(echo "$creds" | jq -r '.Credentials.SecretAccessKey')
+  token=$(echo "$creds"  | jq -r '.Credentials.SessionToken')
+  expiry=$(echo "$creds" | jq -r '.Credentials.Expiration')
+  [[ -n "$key" && -n "$secret" && -n "$token" && -n "$expiry" ]] \
+    || die "Failed to parse sts:GetSessionToken response"
+
+  aws configure set aws_access_key_id      "$key"    --profile "$profile"
+  aws configure set aws_secret_access_key  "$secret" --profile "$profile"
+  aws configure set aws_session_token      "$token"  --profile "$profile"
+  aws configure set aws_session_expiration "$expiry" --profile "$profile"
+  aws configure set region                 "$region" --profile "$profile"
+  aws configure set output                 json      --profile "$profile"
+
+  export AWS_PROFILE="$profile"
+  echo "Assumed appserver-admin (MFA) until $expiry" >&2
+}
+
 # Ensure a valid session exists for the requested role, assuming if not.
 # Phase 5: legacy long-lived `appserver` profile fallback removed.
 ensure_session_valid_for_role() {
