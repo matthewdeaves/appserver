@@ -119,6 +119,30 @@
       "Effect": "Allow",
       "Action": "sts:GetCallerIdentity",
       "Resource": "*"
+    },
+    {
+      "Sid": "DenyAllWithoutMFA",
+      "Effect": "Deny",
+      "NotAction": [
+        "iam:GetUser",
+        "iam:ChangePassword",
+        "iam:CreateVirtualMFADevice",
+        "iam:DeleteVirtualMFADevice",
+        "iam:EnableMFADevice",
+        "iam:DeactivateMFADevice",
+        "iam:ResyncMFADevice",
+        "iam:ListMFADevices",
+        "iam:ListVirtualMFADevices",
+        "iam:ListAccessKeys",
+        "sts:GetSessionToken",
+        "sts:GetCallerIdentity"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "BoolIfExists": {
+          "aws:MultiFactorAuthPresent": "false"
+        }
+      }
     }
   ]
 }
