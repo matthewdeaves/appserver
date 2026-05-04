@@ -294,6 +294,17 @@ cmd_destroy() {
   check_dependencies
   load_env
 
+  # Destroy needs admin (NOT deploy-role) because it has to delete the
+  # operator-role boundary policies. The deploy role is bounded by
+  # operator_deploy_boundary which contains DenyOperatorPolicyMutation —
+  # the deploy role cannot delete the policy that bounds it. Self-eating
+  # by design (Finding 2 from spec 003). Mirror cmd_init's auth pattern:
+  # mint an MFA-derived admin session via sts:GetSessionToken.
+  if [[ "${AWS_PROFILE:-}" == appserver-* && "${AWS_PROFILE:-}" != appserver-admin-mfa ]]; then
+    unset AWS_PROFILE
+  fi
+  admin_mfa_session
+
   echo "This will destroy ALL appserver infrastructure."
   read -rp "Type 'destroy' to confirm: " confirm
   [[ "$confirm" == "destroy" ]] || { echo "Aborted."; return 1; }
@@ -716,7 +727,10 @@ declare -A SUBCOMMAND_ROLE=(
   [threats_allow]=cookie-ops
   [threats_unallow]=cookie-ops
   [deploy]=deploy
-  [destroy]=deploy
+  # destroy is NOT in this map — it requires admin (not deploy-role)
+  # because it has to delete the boundary policies that bound the deploy
+  # role itself. cmd_destroy calls admin_mfa_session() directly. Same
+  # rationale as init.
   [start]=deploy
   [stop]=deploy
   [ssh]=deploy
@@ -746,7 +760,7 @@ case "${1:-}" in
   auth)     shift; cmd_auth "$@" ;;
   init)     cmd_init ;;
   deploy)   with_role deploy   cmd_deploy ;;
-  destroy)  with_role destroy  cmd_destroy ;;
+  destroy)  cmd_destroy ;;  # admin-only; cmd_destroy calls admin_mfa_session
   status)   with_role status   cmd_status ;;
   health)   with_role health   cmd_health ;;
   users)    with_role users    cmd_users ;;
