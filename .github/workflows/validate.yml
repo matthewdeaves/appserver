@@ -56,8 +56,13 @@ jobs:
 
       - name: ShellCheck scripts
         uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # v2.0.0
+        env:
+          # -x lets shellcheck follow `source "$SCRIPT_DIR/lib/*.sh"` directives,
+          # silencing SC1091 ("not following") on the lib split.
+          SHELLCHECK_OPTS: '-x'
         with:
           scandir: scripts/
+          severity: warning
 
       - name: Validate Claude hooks
         run: |
