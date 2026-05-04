@@ -513,9 +513,9 @@ state_bucket_policy_json() {
               "aws:PrincipalArn": [
                 $caller,
                 "arn:aws:iam::\($account):user/appserver-deployer",
-                "arn:aws:sts::\($account):assumed-role/appserver-readonly-role/*",
-                "arn:aws:sts::\($account):assumed-role/appserver-cookie-ops-role/*",
-                "arn:aws:sts::\($account):assumed-role/appserver-deploy-role/*",
+                "arn:aws:iam::\($account):role/appserver-readonly-role",
+                "arn:aws:iam::\($account):role/appserver-cookie-ops-role",
+                "arn:aws:iam::\($account):role/appserver-deploy-role",
                 "arn:aws:iam::\($account):root"
               ]
             }
