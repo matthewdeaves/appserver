@@ -475,10 +475,65 @@ ensure_deployer_access() {
   fi
 }
 
+# Build the state-bucket policy. Idempotent — applied on every init run so
+# that adding new operator roles (or changing the caller) automatically
+# re-grants access. Allowlists: caller (admin), deployer USER, the three
+# operator-role STS sessions, root.
+state_bucket_policy_json() {
+  local bucket="$1" caller="$2" account="$3"
+  jq -n \
+    --arg bucket "$bucket" \
+    --arg caller "$caller" \
+    --arg account "$account" \
+    '{
+      Version: "2012-10-17",
+      Statement: [
+        {
+          Sid: "DenyNonSSL",
+          Effect: "Deny",
+          Principal: "*",
+          Action: "s3:*",
+          Resource: [
+            "arn:aws:s3:::\($bucket)",
+            "arn:aws:s3:::\($bucket)/*"
+          ],
+          Condition: { Bool: { "aws:SecureTransport": "false" } }
+        },
+        {
+          Sid: "RestrictStateAccess",
+          Effect: "Deny",
+          Principal: "*",
+          Action: "s3:*",
+          Resource: [
+            "arn:aws:s3:::\($bucket)",
+            "arn:aws:s3:::\($bucket)/*"
+          ],
+          Condition: {
+            StringNotLike: {
+              "aws:PrincipalArn": [
+                $caller,
+                "arn:aws:iam::\($account):user/appserver-deployer",
+                "arn:aws:sts::\($account):assumed-role/appserver-readonly-role/*",
+                "arn:aws:sts::\($account):assumed-role/appserver-cookie-ops-role/*",
+                "arn:aws:sts::\($account):assumed-role/appserver-deploy-role/*",
+                "arn:aws:iam::\($account):root"
+              ]
+            }
+          }
+        }
+      ]
+    }'
+}
+
 ensure_state_backend() {
   local region bucket
   region="$(get_region)"
   bucket="$(get_state_bucket)"
+
+  local caller_arn account_id
+  caller_arn=$(aws sts get-caller-identity --query Arn --output text --region "$region") \
+    || die "Failed to get caller ARN"
+  account_id=$(aws sts get-caller-identity --query Account --output text --region "$region")
 
   if aws s3api head-bucket --bucket "$bucket" --region "$region" >/dev/null 2>&1; then
     echo "  State bucket ......... ok"
@@ -511,60 +566,6 @@ ensure_state_backend() {
         BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true \
       || die "Failed to set public access block"
 
-    # State bucket policy: deny non-SSL + restrict access to deployer + admin (MED-1)
-    local caller_arn
-    caller_arn=$(aws sts get-caller-identity --query Arn --output text --region "$region") \
-      || die "Failed to get caller ARN"
-    local account_id
-    account_id=$(aws sts get-caller-identity --query Account --output text --region "$region")
-    local deployer_arn="arn:aws:iam::${account_id}:user/appserver-deployer"
-
-    aws s3api put-bucket-policy \
-      --bucket "$bucket" \
-      --region "$region" \
-      --policy "$(jq -n \
-        --arg bucket "$bucket" \
-        --arg caller "$caller_arn" \
-        --arg deployer "$deployer_arn" \
-        --arg account "$account_id" \
-        '{
-          Version: "2012-10-17",
-          Statement: [
-            {
-              Sid: "DenyNonSSL",
-              Effect: "Deny",
-              Principal: "*",
-              Action: "s3:*",
-              Resource: [
-                "arn:aws:s3:::\($bucket)",
-                "arn:aws:s3:::\($bucket)/*"
-              ],
-              Condition: {
-                Bool: { "aws:SecureTransport": "false" }
-              }
-            },
-            {
-              Sid: "RestrictStateAccess",
-              Effect: "Deny",
-              Principal: "*",
-              Action: "s3:*",
-              Resource: [
-                "arn:aws:s3:::\($bucket)",
-                "arn:aws:s3:::\($bucket)/*"
-              ],
-              Condition: {
-                StringNotLike: {
-                  "aws:PrincipalArn": [
-                    $caller,
-                    $deployer,
-                    "arn:aws:iam::\($account):root"
-                  ]
-                }
-              }
-            }
-          ]
-        }')" || die "Failed to set bucket policy"
-
     aws s3api put-bucket-lifecycle-configuration \
       --bucket "$bucket" \
       --region "$region" \
@@ -579,6 +580,15 @@ ensure_state_backend() {
 
     echo "  State bucket ......... created"
   fi
+
+  # Always (re)apply the bucket policy so that adding a new operator role
+  # to the allowlist takes effect on the next init run.
+  aws s3api put-bucket-policy \
+    --bucket "$bucket" \
+    --region "$region" \
+    --policy "$(state_bucket_policy_json "$bucket" "$caller_arn" "$account_id")" \
+    || die "Failed to set bucket policy"
+  echo "  Bucket policy ........ applied (allowlist: caller + deployer + 3 operator roles + root)"
 }
 
 package_and_upload_artifact() {
