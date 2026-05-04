@@ -398,6 +398,10 @@ make_stub_terraform "$SB"
 keys=$(run_in_sandbox "$SB" 'printf "%s\n" "${!SUBCOMMAND_ROLE[@]}" | sort')
 
 # Required keys for current AWS-touching subcommands.
+# init + destroy are NOT in this map by design — they require admin
+# (not deploy-role) to manage IAM bootstrap and tear down the boundary
+# policies that bound the operator roles. They drive their own
+# admin_mfa_session via the admin profile.
 required=(
   status health users logs spend
   app_list app_deploy app_init app_remove app_restart app_env
@@ -405,8 +409,10 @@ required=(
   threats_default threats_block threats_unblock threats_blocked
   threats_allow threats_unallow threats_allowed threats_list threats_report
   setup_unlock
-  deploy destroy start stop ssh
+  deploy start stop ssh
 )
+# Explicit "must NOT be in map" assertions — these are admin-driven.
+forbidden=(destroy)
 
 for key in "${required[@]}"; do
   if echo "$keys" | grep -qx "$key"; then
@@ -414,6 +420,15 @@ for key in "${required[@]}"; do
   else
     FAIL=$((FAIL + 1))
     FAILED_CASES+=("[SUBCOMMAND_ROLE missing key] $key")
+  fi
+done
+
+for key in "${forbidden[@]}"; do
+  if echo "$keys" | grep -qx "$key"; then
+    FAIL=$((FAIL + 1))
+    FAILED_CASES+=("[SUBCOMMAND_ROLE has forbidden key] $key (admin-driven; should not be in role map)")
+  else
+    PASS=$((PASS + 1))
   fi
 done
 
