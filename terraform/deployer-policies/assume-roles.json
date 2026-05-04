@@ -1,0 +1,34 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AssumeOperatorRoles",
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": [
+        "arn:aws:iam::*:role/appserver-readonly-role",
+        "arn:aws:iam::*:role/appserver-cookie-ops-role",
+        "arn:aws:iam::*:role/appserver-deploy-role"
+      ],
+      "Condition": {
+        "Bool": { "aws:MultiFactorAuthPresent": "true" },
+        "NumericLessThan": { "aws:MultiFactorAuthAge": "3600" }
+      }
+    },
+    {
+      "Sid": "GetCallerIdentity",
+      "Effect": "Allow",
+      "Action": "sts:GetCallerIdentity",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ListMFAForSelf",
+      "Effect": "Allow",
+      "Action": [
+        "iam:ListMFADevices",
+        "iam:GetUser"
+      ],
+      "Resource": "arn:aws:iam::*:user/appserver-deployer"
+    }
+  ]
+}

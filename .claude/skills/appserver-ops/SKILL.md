@@ -59,7 +59,7 @@ Use [diagnostics.md](references/diagnostics.md) for exact commands. Work top-dow
 6. Resource pressure (memory, disk — t4g.small has 2GB)
 7. Security posture (SG rules, CloudWatch alarms, DLM snapshots)
 
-**AWS profile:** Use `AWS_PROFILE=appserver` (deployer) for all commands. See [aws-access.md](references/aws-access.md) for escalation.
+**AWS auth:** Run `./scripts/appserver.sh auth` once at the start of a session — the CLI handles per-subcommand role assumption automatically. Most Phase 1 (Triage) calls (`status`, `health`, `users`, `logs`, `app list`) escalate to the **cookie-ops** role because they `ssm send-command` shell on the instance; only pure AWS reads (`spend`, `threats list/report`) stay on readonly. Mutations + `deploy`/`destroy` escalate further to deploy-role. Each new role prompts for MFA on first use; subsequent calls reuse the cached 1-hour STS session. See [aws-access.md](references/aws-access.md) for the full role map and recovery options.
 
 ### Phase 2: Diagnosis
 

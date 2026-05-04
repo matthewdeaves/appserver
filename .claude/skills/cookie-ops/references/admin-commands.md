@@ -1,6 +1,6 @@
 # Cookie Admin Commands
 
-All commands run inside the `cookie-web` container via SSM. Use `AWS_PROFILE=appserver`.
+All commands run inside the `cookie-web` container via SSM. The CLI handles role assumption — run `./scripts/appserver.sh auth` once per session and AWS-touching subcommands automatically use `appserver-cookie-ops-role` (mutations) or `appserver-readonly-role` (reads).
 
 ## SSM Pattern
 

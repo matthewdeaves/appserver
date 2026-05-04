@@ -48,12 +48,40 @@
         "iam:DeleteUser",
         "iam:ListAccessKeys",
         "iam:CreateAccessKey",
+        "iam:UpdateAccessKey",
         "iam:DeleteAccessKey",
         "iam:AttachUserPolicy",
         "iam:DetachUserPolicy",
         "iam:ListAttachedUserPolicies"
       ],
       "Resource": "arn:aws:iam::*:user/appserver-deployer"
+    },
+    {
+      "Sid": "ManageDeployerMFA",
+      "Effect": "Allow",
+      "Action": [
+        "iam:ListMFADevices",
+        "iam:EnableMFADevice",
+        "iam:DeactivateMFADevice",
+        "iam:ResyncMFADevice"
+      ],
+      "Resource": [
+        "arn:aws:iam::*:user/appserver-deployer",
+        "arn:aws:iam::*:mfa/appserver-deployer"
+      ]
+    },
+    {
+      "Sid": "ManageVirtualMFA",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateVirtualMFADevice",
+        "iam:DeleteVirtualMFADevice",
+        "iam:ListVirtualMFADevices"
+      ],
+      "Resource": [
+        "arn:aws:iam::*:mfa/appserver-deployer",
+        "arn:aws:iam::*:mfa/*"
+      ]
     },
     {
       "Sid": "StateBucket",

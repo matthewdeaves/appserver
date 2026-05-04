@@ -32,6 +32,15 @@ Input can be:
 - Free-form: "what's attacking the server?", "block that scanner", "show me the latest report"
 - No input defaults to **analyze** mode
 
+## Auth
+
+Run `./scripts/appserver.sh auth` once per shell session. The CLI maps each `threats` subcommand to the right operator role automatically:
+
+- `threats` (analyze), `threats list`, `threats report`, `threats blocked`, `threats allowed` → `appserver-readonly-role`
+- `threats block`, `threats unblock`, `threats allow`, `threats unallow` → `appserver-cookie-ops-role` (Cloudflare API + SSM)
+
+Cloudflare API calls use the `CLOUDFLARE_API_TOKEN` env var (set via the local `terraform/.env`) — that flow is unchanged.
+
 ## Scripts
 
 Helper scripts in `scripts/` — run from the appserver repo root:

@@ -33,6 +33,24 @@ output "cf_access_client_secret" {
   sensitive   = true
 }
 
+# Operator role ARNs — consumed by `scripts/appserver.sh auth` to call
+# sts:AssumeRole. Names are stable; ARNs include the account ID so the CLI
+# doesn't need to know it ahead of time.
+output "operator_role_readonly_arn" {
+  description = "ARN of the read-only operator role"
+  value       = aws_iam_role.appserver_readonly.arn
+}
+
+output "operator_role_cookie_ops_arn" {
+  description = "ARN of the cookie-ops operator role"
+  value       = aws_iam_role.appserver_cookie_ops.arn
+}
+
+output "operator_role_deploy_arn" {
+  description = "ARN of the deploy operator role"
+  value       = aws_iam_role.appserver_deploy.arn
+}
+
 # Paste this DS record at the domain registrar to complete DNSSEC activation.
 # Until it's pasted, the zone-level DNSSEC resource is inert — resolvers ignore it.
 output "dnssec_ds_record" {

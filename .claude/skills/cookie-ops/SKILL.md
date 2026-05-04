@@ -80,7 +80,7 @@ Use `cookie_admin` subcommands via SSM — see [admin-commands.md](references/ad
 
 ## Conventions
 
-- All SSM commands use `AWS_PROFILE=appserver` (deployer profile)
+- AWS auth: `./scripts/appserver.sh auth` once per session — the CLI assumes the right per-skill IAM role on demand. Cookie-ops mutations (`app deploy`, `app env`, `app init`, `app remove`, `app restart`, `config push`, `threats block/unblock/allow/unallow`) escalate to `appserver-cookie-ops-role` automatically; reads use `appserver-readonly-role`. First mutation in a session prompts for MFA.
 - Always use `--json` flag with `cookie_admin` subcommands for structured output
 - Scope log queries: `--since 10m` or `--tail 50` to avoid noise
 - Cookie containers: `cookie-web` (app), `cookie-db` (postgres)

@@ -19,6 +19,9 @@
         "iam:PassRole",
         "iam:TagRole",
         "iam:UntagRole",
+        "iam:UpdateAssumeRolePolicy",
+        "iam:UpdateRole",
+        "iam:UpdateRoleDescription",
         "iam:PutRolePermissionsBoundary"
       ],
       "Resource": [
@@ -178,12 +181,36 @@
       ],
       "Resource": "*",
       "Condition": {
-        "ForAnyValue:ArnNotLike": {
+        "ForAnyValue:ArnNotEquals": {
           "iam:PolicyARN": [
-            "arn:aws:iam::*:policy/Appserver*",
-            "arn:aws:iam::*:policy/appserver-*",
+            "arn:aws:iam::*:policy/AppserverDeployerCompute",
+            "arn:aws:iam::*:policy/AppserverDeployerIamSsm",
+            "arn:aws:iam::*:policy/AppserverDeployerMonitoringStorage",
+            "arn:aws:iam::*:policy/AppserverDeployerAssumeRoles",
+            "arn:aws:iam::*:policy/AppserverOperatorReadonly",
+            "arn:aws:iam::*:policy/AppserverOperatorCookieOps",
+            "arn:aws:iam::*:policy/appserver-instance-ssm-parameters",
+            "arn:aws:iam::*:policy/appserver-instance-s3-artifacts",
             "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
             "arn:aws:iam::aws:policy/service-role/AWSDataLifecycleManagerServiceRole"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "DenyAttachToInstanceRole",
+      "Effect": "Deny",
+      "Action": [
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy"
+      ],
+      "Resource": "arn:aws:iam::*:role/appserver-instance-role",
+      "Condition": {
+        "ForAnyValue:ArnNotEquals": {
+          "iam:PolicyARN": [
+            "arn:aws:iam::*:policy/appserver-instance-ssm-parameters",
+            "arn:aws:iam::*:policy/appserver-instance-s3-artifacts",
+            "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
           ]
         }
       }

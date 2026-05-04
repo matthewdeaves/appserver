@@ -76,6 +76,22 @@ Run `setup local` (interactive) to write `terraform/.env` + `terraform/terraform
 
 `init` is idempotent but requires admin AWS credentials (can't run as the deployer user). Use it only for scenario A, or if a prior `destroy --cleanup-bootstrap` wiped the IAM user + state bucket.
 
+### MFA-gated operator roles (003-iam-mfa-scoping)
+
+Routine CLI commands run via three MFA-gated IAM roles assumed from the deployer user:
+
+- `appserver-readonly-role` — pure AWS reads only (`spend`, `threats analyze/list/report/blocked/allowed`, `setup unlock`). No `ssm:SendCommand`.
+- `appserver-cookie-ops-role` — anything that runs shell on the instance via SSM, plus app management (`status`, `health`, `users`, `logs`, `app list/deploy/init/remove/restart/env`, `config push`, `threats block/unblock/allow/unallow`)
+- `appserver-deploy-role` — full infra changes (`deploy`, `destroy`, `start`, `stop`, `ssh`)
+
+Sessions are 1 hour; the CLI auto-assumes the right role per subcommand. One-time setup per machine:
+
+1. Enrol a TOTP MFA device on `appserver-deployer` via the AWS console (manual operator step)
+2. Add `MFA_SERIAL_NUMBER=arn:aws:iam::<account-id>:mfa/appserver-deployer` to the local terraform env file
+3. Run `./scripts/appserver.sh auth` to assume a role; subsequent CLI calls reuse cached sessions
+
+After the phase-5 cutover, the deployer user only holds `AppserverDeployerAssumeRoles`; the access key on disk can only call MFA-gated `sts:AssumeRole` and is useless without the TOTP code. See `specs/003-iam-mfa-scoping/HANDOFF.md` for the apply sequence and recovery options.
+
 Optional: decrypt pentest target configs (requires SSM access + `git-crypt` installed locally):
 ```bash
 ./scripts/appserver.sh setup unlock            # Fetches key from SSM automatically

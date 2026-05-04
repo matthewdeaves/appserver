@@ -2,17 +2,18 @@
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 TERRAFORM_DIR="$(cd "$SCRIPT_DIR/../terraform" && pwd)" || { echo "ERROR: terraform/ directory not found" >&2; exit 1; }
 CONFIG_DIR="$(cd "$SCRIPT_DIR/../config" && pwd)" || { echo "ERROR: config/ directory not found" >&2; exit 1; }
 ENV_FILE="$TERRAFORM_DIR/.env"
 CACHED_REGION=""
 CACHED_INSTANCE_ID=""
 
-# Use the appserver AWS profile if it exists and no profile is already set
-if [[ -z "${AWS_PROFILE:-}" ]] && aws configure list-profiles 2>/dev/null | grep -q '^appserver$'; then
-  export AWS_PROFILE=appserver
-fi
+# Phase 5: no auto-export of the legacy `appserver` profile. AWS_PROFILE
+# is set per-subcommand by ensure_session_valid_for_role -> appserver-<role>.
+# Operators who still have a long-lived `appserver` profile in
+# ~/.aws/credentials can either rotate to the role flow (recommended) or
+# pass AWS_PROFILE=appserver explicitly when they need it.
 
 # --- Helper functions ---
 
@@ -190,6 +191,126 @@ cf_api() {
   echo "$response"
 }
 
+# --- Operator-role auth (MFA + sts:AssumeRole) ---
+#
+# The CLI assumes one of three IAM roles per subcommand
+# (readonly / cookie-ops / deploy), each gated by MFA + a 1-hour STS
+# session. See specs/003-iam-mfa-scoping/spec.md.
+#
+# Phase 5 cutover: long-lived `appserver` profile fallback removed.
+# All AWS-touching subcommands now require either an active operator-role
+# session (assume_role -> appserver-<role> profile) or an explicit
+# APPSERVER_AUTH_DISABLED=1 escape hatch (tests / local dev).
+
+APPSERVER_AUTH_DISABLED="${APPSERVER_AUTH_DISABLED:-}"  # tests can set =1 to bypass
+
+get_mfa_serial() {
+  if [[ -n "${MFA_SERIAL_NUMBER:-}" ]]; then
+    echo "$MFA_SERIAL_NUMBER"
+    return 0
+  fi
+  return 1
+}
+
+# Construct the operator role ARN for a short role name. Pulls account ID
+# from sts:GetCallerIdentity (whatever profile is currently active).
+get_role_arn() {
+  local role="$1"
+  local account_id
+  account_id=$(aws sts get-caller-identity --query Account --output text 2>/dev/null) \
+    || return 1
+  case "$role" in
+    readonly)   echo "arn:aws:iam::${account_id}:role/appserver-readonly-role" ;;
+    cookie-ops) echo "arn:aws:iam::${account_id}:role/appserver-cookie-ops-role" ;;
+    deploy)     echo "arn:aws:iam::${account_id}:role/appserver-deploy-role" ;;
+    *)          return 1 ;;
+  esac
+}
+
+# Check whether the named profile has a non-expired STS session
+# (more than 5 minutes remaining on aws_session_expiration).
+session_valid() {
+  local profile="$1"
+  local expires_at
+  expires_at=$(aws configure get aws_session_expiration --profile "$profile" 2>/dev/null) || return 1
+  [[ -n "$expires_at" ]] || return 1
+
+  local now expiry_epoch
+  now=$(date -u +%s)
+  expiry_epoch=$(date -d "$expires_at" +%s 2>/dev/null) || return 1
+  local remaining=$((expiry_epoch - now))
+  [[ $remaining -gt 300 ]]
+}
+
+# Prompt for a TOTP code, call sts:AssumeRole, write the resulting
+# session to ~/.aws/credentials under profile appserver-<role>, and
+# export AWS_PROFILE.
+assume_role() {
+  local role="$1"
+  local role_arn mfa_serial
+  role_arn=$(get_role_arn "$role") \
+    || die "Could not derive role ARN for '$role'. Check AWS credentials work first."
+  mfa_serial=$(get_mfa_serial) \
+    || die "MFA_SERIAL_NUMBER not set. Add it to terraform local-env file (see HANDOFF.md phase 2)."
+
+  local session_name
+  session_name="${role//-/_}-$(date +%s)"
+  local code
+  echo "Enter MFA code for '$role' role:" >&2
+  read -rsp "  " code
+  echo >&2
+  [[ "$code" =~ ^[0-9]{6}$ ]] || die "Invalid MFA code (expected 6 digits)"
+
+  local creds
+  # Use the default credential chain (long-lived deployer key) to call
+  # sts:AssumeRole; do NOT chain off an already-assumed session.
+  creds=$(AWS_PROFILE=appserver aws sts assume-role \
+    --role-arn "$role_arn" \
+    --role-session-name "$session_name" \
+    --serial-number "$mfa_serial" \
+    --token-code "$code" \
+    --duration-seconds 3600 \
+    --output json 2>&1) || die "sts:AssumeRole failed: $creds"
+
+  local profile="appserver-$role"
+  local region key secret token expiry
+  region="$(get_region)"
+  key=$(echo "$creds"   | jq -r '.Credentials.AccessKeyId')
+  secret=$(echo "$creds" | jq -r '.Credentials.SecretAccessKey')
+  token=$(echo "$creds"  | jq -r '.Credentials.SessionToken')
+  expiry=$(echo "$creds" | jq -r '.Credentials.Expiration')
+  [[ -n "$key" && -n "$secret" && -n "$token" && -n "$expiry" ]] \
+    || die "Failed to parse sts:AssumeRole response"
+
+  aws configure set aws_access_key_id      "$key"    --profile "$profile"
+  aws configure set aws_secret_access_key  "$secret" --profile "$profile"
+  aws configure set aws_session_token      "$token"  --profile "$profile"
+  aws configure set aws_session_expiration "$expiry" --profile "$profile"
+  aws configure set region                 "$region" --profile "$profile"
+  aws configure set output                 json      --profile "$profile"
+
+  export AWS_PROFILE="$profile"
+  echo "Assumed $role role (expires $expiry)" >&2
+}
+
+# Ensure a valid session exists for the requested role, assuming if not.
+# Phase 5: legacy long-lived `appserver` profile fallback removed.
+ensure_session_valid_for_role() {
+  local role="$1"
+  [[ -n "$APPSERVER_AUTH_DISABLED" ]] && return 0  # tests / explicit opt-out
+
+  if ! get_mfa_serial >/dev/null 2>&1; then
+    die "MFA_SERIAL_NUMBER not set. Add it to the terraform local-env file and run './scripts/appserver.sh auth'."
+  fi
+
+  local profile="appserver-$role"
+  if session_valid "$profile"; then
+    export AWS_PROFILE="$profile"
+    return 0
+  fi
+  assume_role "$role"
+}
+
 # --- IAM helpers ---
 
 # Delete all non-default versions of an IAM policy (required before policy deletion)
@@ -269,8 +390,24 @@ ensure_deployer_access() {
   attach_iam_policy "$caller_user" "AppserverAdmin" "$account_id"
 
   # --- Deployer policies ---
-  local policy_names=("AppserverDeployerCompute" "AppserverDeployerIamSsm" "AppserverDeployerMonitoringStorage")
-  local policy_files=("$policy_dir/compute.json" "$policy_dir/iam-ssm.json" "$policy_dir/monitoring-storage.json")
+  # Phase 5 cutover: the deployer USER now holds ONLY AppserverDeployerAssumeRoles.
+  # The three legacy policies (compute / iam-ssm / monitoring-storage) are
+  # still managed here so terraform-side resources (the deploy role) and the
+  # admin/caller user can attach them, but they no longer attach to the
+  # deployer user. A leaked access key is now reduced to MFA-gated
+  # sts:AssumeRole on the three operator roles — useless without MFA.
+  local policy_names=(
+    "AppserverDeployerCompute"
+    "AppserverDeployerIamSsm"
+    "AppserverDeployerMonitoringStorage"
+    "AppserverDeployerAssumeRoles"
+  )
+  local policy_files=(
+    "$policy_dir/compute.json"
+    "$policy_dir/iam-ssm.json"
+    "$policy_dir/monitoring-storage.json"
+    "$policy_dir/assume-roles.json"
+  )
 
   for i in "${!policy_names[@]}"; do
     upsert_iam_policy "${policy_names[$i]}" "${policy_files[$i]}" "$account_id"
@@ -285,11 +422,30 @@ ensure_deployer_access() {
     echo "  IAM user ............. created ($deployer_user)"
   fi
 
-  # Attach deployer policies to both the deployer user and the calling user
-  for user in "$deployer_user" "$caller_user"; do
-    for i in "${!policy_names[@]}"; do
-      attach_iam_policy "$user" "${policy_names[$i]}" "$account_id"
-    done
+  # Phase 5: the deployer USER attaches ONLY the AssumeRoles policy.
+  # Detach the legacy three from the user if a previous phase attached
+  # them (idempotent — phase 1-4 installs leave them in place; phase 5
+  # cleans them up on the next `init` run).
+  local legacy_policy_names=(
+    "AppserverDeployerCompute"
+    "AppserverDeployerIamSsm"
+    "AppserverDeployerMonitoringStorage"
+  )
+  attach_iam_policy "$deployer_user" "AppserverDeployerAssumeRoles" "$account_id"
+  for name in "${legacy_policy_names[@]}"; do
+    if aws iam list-attached-user-policies --user-name "$deployer_user" \
+        --query "AttachedPolicies[?PolicyName=='$name']" --output text 2>/dev/null \
+        | grep -q "$name"; then
+      aws iam detach-user-policy --user-name "$deployer_user" \
+        --policy-arn "arn:aws:iam::${account_id}:policy/${name}" 2>/dev/null \
+        && echo "  Policy attachment .... detached ($name -> $deployer_user, phase-5 cutover)"
+    fi
+  done
+
+  # The calling user (admin) still gets the three legacy policies attached
+  # for emergency direct-deployer access without going through MFA.
+  for name in "${legacy_policy_names[@]}"; do
+    attach_iam_policy "$caller_user" "$name" "$account_id"
   done
 
   local existing_keys
@@ -319,10 +475,65 @@ ensure_deployer_access() {
   fi
 }
 
+# Build the state-bucket policy. Idempotent — applied on every init run so
+# that adding new operator roles (or changing the caller) automatically
+# re-grants access. Allowlists: caller (admin), deployer USER, the three
+# operator-role STS sessions, root.
+state_bucket_policy_json() {
+  local bucket="$1" caller="$2" account="$3"
+  jq -n \
+    --arg bucket "$bucket" \
+    --arg caller "$caller" \
+    --arg account "$account" \
+    '{
+      Version: "2012-10-17",
+      Statement: [
+        {
+          Sid: "DenyNonSSL",
+          Effect: "Deny",
+          Principal: "*",
+          Action: "s3:*",
+          Resource: [
+            "arn:aws:s3:::\($bucket)",
+            "arn:aws:s3:::\($bucket)/*"
+          ],
+          Condition: { Bool: { "aws:SecureTransport": "false" } }
+        },
+        {
+          Sid: "RestrictStateAccess",
+          Effect: "Deny",
+          Principal: "*",
+          Action: "s3:*",
+          Resource: [
+            "arn:aws:s3:::\($bucket)",
+            "arn:aws:s3:::\($bucket)/*"
+          ],
+          Condition: {
+            StringNotLike: {
+              "aws:PrincipalArn": [
+                $caller,
+                "arn:aws:iam::\($account):user/appserver-deployer",
+                "arn:aws:iam::\($account):role/appserver-readonly-role",
+                "arn:aws:iam::\($account):role/appserver-cookie-ops-role",
+                "arn:aws:iam::\($account):role/appserver-deploy-role",
+                "arn:aws:iam::\($account):root"
+              ]
+            }
+          }
+        }
+      ]
+    }'
+}
+
 ensure_state_backend() {
   local region bucket
   region="$(get_region)"
   bucket="$(get_state_bucket)"
+
+  local caller_arn account_id
+  caller_arn=$(aws sts get-caller-identity --query Arn --output text --region "$region") \
+    || die "Failed to get caller ARN"
+  account_id=$(aws sts get-caller-identity --query Account --output text --region "$region")
 
   if aws s3api head-bucket --bucket "$bucket" --region "$region" >/dev/null 2>&1; then
     echo "  State bucket ......... ok"
@@ -355,60 +566,6 @@ ensure_state_backend() {
         BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true \
       || die "Failed to set public access block"
 
-    # State bucket policy: deny non-SSL + restrict access to deployer + admin (MED-1)
-    local caller_arn
-    caller_arn=$(aws sts get-caller-identity --query Arn --output text --region "$region") \
-      || die "Failed to get caller ARN"
-    local account_id
-    account_id=$(aws sts get-caller-identity --query Account --output text --region "$region")
-    local deployer_arn="arn:aws:iam::${account_id}:user/appserver-deployer"
-
-    aws s3api put-bucket-policy \
-      --bucket "$bucket" \
-      --region "$region" \
-      --policy "$(jq -n \
-        --arg bucket "$bucket" \
-        --arg caller "$caller_arn" \
-        --arg deployer "$deployer_arn" \
-        --arg account "$account_id" \
-        '{
-          Version: "2012-10-17",
-          Statement: [
-            {
-              Sid: "DenyNonSSL",
-              Effect: "Deny",
-              Principal: "*",
-              Action: "s3:*",
-              Resource: [
-                "arn:aws:s3:::\($bucket)",
-                "arn:aws:s3:::\($bucket)/*"
-              ],
-              Condition: {
-                Bool: { "aws:SecureTransport": "false" }
-              }
-            },
-            {
-              Sid: "RestrictStateAccess",
-              Effect: "Deny",
-              Principal: "*",
-              Action: "s3:*",
-              Resource: [
-                "arn:aws:s3:::\($bucket)",
-                "arn:aws:s3:::\($bucket)/*"
-              ],
-              Condition: {
-                StringNotLike: {
-                  "aws:PrincipalArn": [
-                    $caller,
-                    $deployer,
-                    "arn:aws:iam::\($account):root"
-                  ]
-                }
-              }
-            }
-          ]
-        }')" || die "Failed to set bucket policy"
-
     aws s3api put-bucket-lifecycle-configuration \
       --bucket "$bucket" \
       --region "$region" \
@@ -423,6 +580,15 @@ ensure_state_backend() {
 
     echo "  State bucket ......... created"
   fi
+
+  # Always (re)apply the bucket policy so that adding a new operator role
+  # to the allowlist takes effect on the next init run.
+  aws s3api put-bucket-policy \
+    --bucket "$bucket" \
+    --region "$region" \
+    --policy "$(state_bucket_policy_json "$bucket" "$caller_arn" "$account_id")" \
+    || die "Failed to set bucket policy"
+  echo "  Bucket policy ........ applied (allowlist: caller + deployer + 3 operator roles + root)"
 }
 
 package_and_upload_artifact() {
@@ -571,6 +737,7 @@ cmd_deploy() {
     -backend-config="use_lockfile=true" \
     -reconfigure \
     -input=false 2>&1 | mask_account_ids
+  [[ "${PIPESTATUS[0]}" -eq 0 ]] || die "terraform init failed"
 
   # Import orphaned artifacts bucket if it exists but isn't in state
   # (happens when a previous destroy deleted state but the bucket survived)
@@ -580,9 +747,11 @@ cmd_deploy() {
      && ! terraform state show aws_s3_bucket.artifacts &>/dev/null; then
     echo "Importing existing artifacts bucket into state..."
     terraform import aws_s3_bucket.artifacts "$artifacts_bucket" 2>&1 | mask_account_ids
+    [[ "${PIPESTATUS[0]}" -eq 0 ]] || die "terraform import failed"
   fi
 
   terraform apply -input=false -auto-approve 2>&1 | mask_account_ids
+  [[ "${PIPESTATUS[0]}" -eq 0 ]] || die "terraform apply failed — see output above. Artifacts NOT uploaded."
 
   echo
   echo "Uploading artifacts..."
@@ -615,6 +784,7 @@ cmd_destroy() {
       -backend-config="use_lockfile=true" \
       -reconfigure \
       -input=false 2>&1 | mask_account_ids
+    [[ "${PIPESTATUS[0]}" -eq 0 ]] || die "terraform init failed"
 
     # Snapshot state to S3 before destroy — last-resort recovery if the
     # destroy goes wrong or wipes something we wanted to keep. Saved
@@ -645,8 +815,10 @@ cmd_destroy() {
     terraform apply -input=false -auto-approve \
       -var "force_destroy=true" \
       -target="aws_s3_bucket.artifacts" 2>&1 | mask_account_ids
+    [[ "${PIPESTATUS[0]}" -eq 0 ]] || die "terraform apply (force_destroy) failed"
     terraform destroy -input=false -auto-approve \
       -var "force_destroy=true" 2>&1 | mask_account_ids
+    [[ "${PIPESTATUS[0]}" -eq 0 ]] || die "terraform destroy failed"
     echo "Infrastructure destroyed."
   else
     echo "State backend unavailable — skipping terraform destroy."
@@ -672,7 +844,20 @@ cmd_destroy() {
   local bucket="appserver-tfstate-${account_id}-${region}"
 
   local deployer_user="appserver-deployer"
-  local deployer_policies=("AppserverDeployerCompute" "AppserverDeployerIamSsm" "AppserverDeployerMonitoringStorage")
+  # Includes AppserverDeployerAssumeRoles (added in the IAM scoping rollout)
+  # so cleanup-bootstrap fully removes deployer-tier policies.
+  local deployer_policies=(
+    "AppserverDeployerCompute"
+    "AppserverDeployerIamSsm"
+    "AppserverDeployerMonitoringStorage"
+    "AppserverDeployerAssumeRoles"
+  )
+  # Subset attached to the calling user (admin); AssumeRoles is deployer-only.
+  local caller_deployer_policies=(
+    "AppserverDeployerCompute"
+    "AppserverDeployerIamSsm"
+    "AppserverDeployerMonitoringStorage"
+  )
 
   # Detach policies from deployer user and delete access keys
   if aws iam get-user --user-name "$deployer_user" &>/dev/null; then
@@ -743,10 +928,15 @@ cmd_destroy() {
     echo "  State bucket ......... already gone ($bucket)"
   fi
 
-  # Detach deployer policies from calling user and delete them
+  # Detach legacy deployer policies from the calling user (AssumeRoles was
+  # never attached to the caller, so it's not in this loop), then delete all
+  # deployer policies.
+  for name in "${caller_deployer_policies[@]}"; do
+    aws iam detach-user-policy --user-name "$caller_user" \
+      --policy-arn "arn:aws:iam::${account_id}:policy/${name}" 2>/dev/null || true
+  done
   for name in "${deployer_policies[@]}"; do
     local arn="arn:aws:iam::${account_id}:policy/${name}"
-    aws iam detach-user-policy --user-name "$caller_user" --policy-arn "$arn" 2>/dev/null || true
     delete_all_policy_versions "$arn" 2>/dev/null || true
     if aws iam delete-policy --policy-arn "$arn" 2>/dev/null; then
       echo "  IAM policy ........... deleted ($name)"
@@ -2395,40 +2585,195 @@ cmd_health() {
   fi
 }
 
+# --- Auth subcommand (user-facing) ---
+
+cmd_auth() {
+  local role=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --role)
+        role="${2:-}"; shift 2 || die "Missing role after --role"
+        ;;
+      status)
+        cmd_auth_status
+        return $?
+        ;;
+      --help|-h)
+        echo "Usage: appserver auth [--role <readonly|cookie-ops|deploy>]"
+        echo "       appserver auth status"
+        echo
+        echo "Authenticate via MFA + sts:AssumeRole and write a 1-hour STS"
+        echo "session to a local AWS profile. Subsequent CLI subcommands"
+        echo "automatically pick the right role per their scope."
+        return 0
+        ;;
+      *)
+        die "Unknown argument: $1 (try 'appserver auth --help')"
+        ;;
+    esac
+  done
+
+  if [[ -z "$role" ]]; then
+    echo "Which role do you want to assume?"
+    echo "  1) readonly   — diagnostic / triage (default)"
+    echo "  2) cookie-ops — cookie app management"
+    echo "  3) deploy     — full infrastructure changes"
+    read -rp "Role [1]: " choice
+    # shellcheck disable=SC2209  # role names — not the `readonly` builtin
+    case "${choice:-1}" in
+      1|readonly)   role=readonly ;;
+      2|cookie-ops) role=cookie-ops ;;
+      3|deploy)     role=deploy ;;
+      *)            die "Unknown role choice: $choice" ;;
+    esac
+  fi
+
+  case "$role" in
+    readonly|cookie-ops|deploy) ;;
+    *) die "Invalid role: $role (expected: readonly, cookie-ops, deploy)" ;;
+  esac
+
+  assume_role "$role"
+}
+
+cmd_auth_status() {
+  echo "Operator role sessions:"
+  for role in readonly cookie-ops deploy; do
+    local profile="appserver-$role"
+    if aws configure list-profiles 2>/dev/null | grep -q "^${profile}\$"; then
+      local expires_at
+      expires_at=$(aws configure get aws_session_expiration --profile "$profile" 2>/dev/null) || expires_at=""
+      if [[ -n "$expires_at" ]]; then
+        local now expiry_epoch remaining_s
+        now=$(date -u +%s)
+        expiry_epoch=$(date -d "$expires_at" +%s 2>/dev/null) || expiry_epoch=$now
+        remaining_s=$((expiry_epoch - now))
+        if [[ $remaining_s -gt 0 ]]; then
+          local remaining_m=$((remaining_s / 60))
+          echo "  $role:  active (${remaining_m}m remaining, expires $expires_at)"
+        else
+          echo "  $role:  expired ($expires_at)"
+        fi
+      else
+        echo "  $role:  configured but no STS expiry recorded"
+      fi
+    else
+      echo "  $role:  not authenticated"
+    fi
+  done
+  if [[ -n "${AWS_PROFILE:-}" ]]; then
+    echo
+    echo "Active profile: $AWS_PROFILE"
+  fi
+}
+
 # --- Main ---
+
+# Map each subcommand identifier to the operator role required to run it.
+# `auth` subcommand IS the auth call; `init`, `setup local`, `setup lock`,
+# and `config check-ips` don't touch AWS so are deliberately excluded.
+declare -A SUBCOMMAND_ROLE=(
+  # Pure AWS reads (no SSM SendCommand) — readonly role.
+  [spend]=readonly
+  [threats_default]=readonly
+  [threats_blocked]=readonly
+  [threats_allowed]=readonly
+  [threats_list]=readonly
+  [threats_report]=readonly
+  [setup_unlock]=readonly
+  # Run shell on the instance via SSM SendCommand (status/health/users/logs/
+  # app_list all use ssm_run). SendCommand is effectively a write API even
+  # for "read-only" commands like docker ps, so these escalate to cookie-ops.
+  # See specs/003-iam-mfa-scoping/spec.md security review Finding 1.
+  [status]=cookie-ops
+  [health]=cookie-ops
+  [users]=cookie-ops
+  [logs]=cookie-ops
+  [app_list]=cookie-ops
+  [app_deploy]=cookie-ops
+  [app_init]=cookie-ops
+  [app_remove]=cookie-ops
+  [app_restart]=cookie-ops
+  [app_env]=cookie-ops
+  [config_push]=cookie-ops
+  [threats_block]=cookie-ops
+  [threats_unblock]=cookie-ops
+  [threats_allow]=cookie-ops
+  [threats_unallow]=cookie-ops
+  [deploy]=deploy
+  [destroy]=deploy
+  [start]=deploy
+  [stop]=deploy
+  [ssh]=deploy
+)
+
+# Wrapper to ensure the right role's session is active before the
+# subcommand runs. Use as: with_role <key> <cmd_function> [args...].
+with_role() {
+  local key="$1"; shift
+  local role="${SUBCOMMAND_ROLE[$key]:-}"
+  [[ -n "$role" ]] && ensure_session_valid_for_role "$role"
+  "$@"
+}
+
+# When this script is sourced (e.g. by tests/auth-flow-test.sh) all
+# function definitions and the SUBCOMMAND_ROLE map are exposed but the
+# dispatcher below is skipped — sourcing should not run any subcommand.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  # shellcheck disable=SC2317  # `|| true` is reached if `return` errors when not sourced
+  return 0 2>/dev/null || true
+fi
 
 check_dependencies
 load_env
 
 case "${1:-}" in
+  auth)     shift; cmd_auth "$@" ;;
   init)     cmd_init ;;
-  deploy)   cmd_deploy ;;
-  destroy)  cmd_destroy ;;
-  status)   cmd_status ;;
-  health)   cmd_health ;;
-  users)    cmd_users ;;
-  start)    cmd_start ;;
-  stop)     cmd_stop ;;
-  ssh)      cmd_ssh ;;
-  logs)     cmd_logs "${2:-}" ;;
-  spend)    cmd_spend ;;
-  threats)  shift; cmd_threats "$@" ;;
-  setup)    shift; cmd_setup "$@" ;;
+  deploy)   with_role deploy   cmd_deploy ;;
+  destroy)  with_role destroy  cmd_destroy ;;
+  status)   with_role status   cmd_status ;;
+  health)   with_role health   cmd_health ;;
+  users)    with_role users    cmd_users ;;
+  start)    with_role start    cmd_start ;;
+  stop)     with_role stop     cmd_stop ;;
+  ssh)      with_role ssh      cmd_ssh ;;
+  logs)     with_role logs     cmd_logs "${2:-}" ;;
+  spend)    with_role spend    cmd_spend ;;
+  threats)
+    case "${2:-}" in
+      block)    shift 2; with_role threats_block    cmd_threats_block "$@" ;;
+      unblock)  shift 2; with_role threats_unblock  cmd_threats_unblock "$@" ;;
+      blocked)  shift 2; with_role threats_blocked  cmd_threats_blocked "$@" ;;
+      allow)    shift 2; with_role threats_allow    cmd_threats_allow "$@" ;;
+      unallow)  shift 2; with_role threats_unallow  cmd_threats_unallow "$@" ;;
+      allowed)  shift 2; with_role threats_allowed  cmd_threats_allowed "$@" ;;
+      list)     shift 2; with_role threats_list     cmd_threats_list "$@" ;;
+      report)   shift 2; with_role threats_report   cmd_threats_report "$@" ;;
+      *)        shift;   with_role threats_default  cmd_threats "$@" ;;
+    esac
+    ;;
+  setup)
+    case "${2:-}" in
+      unlock)   shift 2; with_role setup_unlock cmd_setup_unlock "$@" ;;
+      *)        shift;   cmd_setup "$@" ;;
+    esac
+    ;;
   config)
     case "${2:-}" in
-      push) cmd_config_push ;;
+      push)      with_role config_push cmd_config_push ;;
       check-ips) cmd_config_check_ips "${3:-}" ;;
-      *)    echo "Usage: appserver config {push|check-ips [--fix]}" ;;
+      *)         echo "Usage: appserver config {push|check-ips [--fix]}" ;;
     esac
     ;;
   app)
     case "${2:-}" in
-      init)    cmd_app_init "${3:-}" ;;
-      deploy)  cmd_app_deploy "${3:-}" ;;
-      restart) cmd_app_restart "${3:-}" ;;
-      list)    cmd_app_list ;;
-      remove)  cmd_app_remove "${3:-}" ;;
-      env)     shift 2; cmd_app_env "$@" ;;
+      init)    with_role app_init    cmd_app_init "${3:-}" ;;
+      deploy)  with_role app_deploy  cmd_app_deploy "${3:-}" ;;
+      restart) with_role app_restart cmd_app_restart "${3:-}" ;;
+      list)    with_role app_list    cmd_app_list ;;
+      remove)  with_role app_remove  cmd_app_remove "${3:-}" ;;
+      env)     shift 2; with_role app_env cmd_app_env "$@" ;;
       *)       echo "Usage: appserver app {init|deploy|restart|list|remove|env} [name] [args...]" ;;
     esac
     ;;
@@ -2436,6 +2781,11 @@ case "${1:-}" in
     echo "Appserver — Docker app hosting on EC2 behind Cloudflare"
     echo
     echo "Usage: $(basename "$0") <command>"
+    echo
+    echo "Auth:"
+    echo "  auth [--role <r>]   Assume an IAM role via MFA (1-hour STS session)"
+    echo "                      Roles: readonly, cookie-ops, deploy"
+    echo "  auth status         Show active role sessions and time remaining"
     echo
     echo "Infrastructure:"
     echo "  init          Interactive setup (IAM, state bucket, config)"
