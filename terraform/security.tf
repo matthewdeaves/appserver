@@ -1,6 +1,31 @@
 # Cloudflare security hardening — free tier settings for public-facing apps.
 # Bot Fight Mode is enabled via the dashboard (not manageable in free-tier Terraform).
 
+# Defence-in-depth allowlist for CF-verified bots and known social/messaging
+# crawlers — skips BIC/WAF/securityLevel/rateLimit/uaBlock/zoneLockdown/hot for
+# them so a future hardening tweak can't accidentally break LinkedIn/X/Facebook
+# link previews. Bot Fight Mode auto-allows verified bots already.
+# Import the existing entrypoint ruleset before first apply:
+#   terraform import cloudflare_ruleset.allow_social_bots zones/d98972eaff17dd8208bbb9708c59c917/8610dbe916e949bcbc85ba67731b2c54
+resource "cloudflare_ruleset" "allow_social_bots" {
+  zone_id     = var.cloudflare_zone_id
+  name        = "default"
+  description = ""
+  kind        = "zone"
+  phase       = "http_request_firewall_custom"
+
+  rules = [{
+    ref         = "allow_verified_and_social_crawlers"
+    description = "Skip BIC/WAF/security_level/rate_limit for CF-verified bots and known social/messaging crawlers (LinkedIn, X, Facebook, Slack, Discord, Telegram, WhatsApp, Pinterest, Mastodon, Bluesky)"
+    expression  = "(cf.client.bot) or (lower(http.user_agent) contains \"linkedinbot\") or (lower(http.user_agent) contains \"twitterbot\") or (lower(http.user_agent) contains \"facebookexternalhit\") or (lower(http.user_agent) contains \"slackbot\") or (lower(http.user_agent) contains \"discordbot\") or (lower(http.user_agent) contains \"telegrambot\") or (lower(http.user_agent) contains \"whatsapp\") or (lower(http.user_agent) contains \"pinterestbot\") or (lower(http.user_agent) contains \"mastodon\") or (lower(http.user_agent) contains \"bluesky\")"
+    action      = "skip"
+    action_parameters = {
+      products = ["bic", "securityLevel", "waf", "rateLimit", "uaBlock", "zoneLockdown", "hot"]
+    }
+    enabled = true
+  }]
+}
+
 # Rate limiting — free plan: 1 rule, 10s period, IP-based only.
 # Targets unauthenticated auth endpoints: passkey register/login, device code flow.
 # Cookie also has Django-level rate limiting (10-20/hr per IP) as a second layer.
